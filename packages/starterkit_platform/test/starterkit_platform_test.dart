@@ -2,15 +2,15 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:starterkit_platform/starterkit_platform.dart';
 
+const _channel = MethodChannel('starterkit/platform/media');
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   tearDown(() async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          const MethodChannel('starterkit/platform/media'),
-          null,
-        );
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_channel, null);
   });
 
   test('MediaLimits enforce bounded caller-controlled limits', () {
@@ -25,12 +25,11 @@ void main() {
   });
 
   test('camera authority must be application-scoped', () {
-    expect(
-      () => StarterCameraCapability(
-        androidFileProviderAuthority: 'com.example.app.fileprovider',
-      ),
-      returnsNormally,
+    final camera = StarterCameraCapability(
+      androidFileProviderAuthority: 'com.example.app.fileprovider',
     );
+    expect(camera.androidFileProviderAuthority, 'com.example.app.fileprovider');
+
     expect(
       () => StarterCameraCapability(
         androidFileProviderAuthority: 'content://provider',
@@ -39,37 +38,36 @@ void main() {
     );
   });
 
-  test('camera capture passes only bounded config and parses success', () async {
+  test('camera capture passes bounded config and parses success', () async {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(
-      const MethodChannel('starterkit/platform/media'),
-      (call) async {
-        expect(call.method, 'captureCamera');
-        final arguments = call.arguments! as Map;
-        expect(arguments['maxBytes'], 1024);
-        expect(arguments['maxPixels'], 2000);
-        expect(
-          arguments['fileProviderAuthority'],
-          'com.example.app.fileprovider',
-        );
-        return {
-          'kind': 'success',
-          'code': 'media.success',
-          'image': {
-            'path': '/private/image.jpg',
-            'byteLength': 512,
-            'width': 20,
-            'height': 20,
-            'mimeType': 'image/jpeg',
-          },
-        };
-      },
-    );
+    messenger.setMockMethodCallHandler(_channel, (call) async {
+      expect(call.method, 'captureCamera');
+      final arguments = call.arguments! as Map;
+      expect(arguments['maxBytes'], 1024);
+      expect(arguments['maxPixels'], 2000);
+      expect(
+        arguments['fileProviderAuthority'],
+        'com.example.app.fileprovider',
+      );
+      return {
+        'kind': 'success',
+        'code': 'media.success',
+        'image': {
+          'path': '/private/image.jpg',
+          'byteLength': 512,
+          'width': 20,
+          'height': 20,
+          'mimeType': 'image/jpeg',
+        },
+      };
+    });
 
-    final result = await StarterCameraCapability(
+    final camera = StarterCameraCapability(
       androidFileProviderAuthority: 'com.example.app.fileprovider',
-    ).capture(limits: const MediaLimits(maxBytes: 1024, maxPixels: 2000));
+    );
+    const limits = MediaLimits(maxBytes: 1024, maxPixels: 2000);
+    final result = await camera.capture(limits: limits);
 
     expect(result.kind, MediaResultKind.success);
     expect(result.image?.width, 20);
@@ -92,14 +90,16 @@ void main() {
   });
 
   test('platform failures do not leak as product exceptions', () async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(
-          const MethodChannel('starterkit/platform/media'),
-          (call) => throw PlatformException(code: 'boom'),
-        );
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(_channel, _throwPlatformFailure);
 
     final result = await const StarterGalleryCapability().pickImage();
     expect(result.kind, MediaResultKind.failure);
     expect(result.code, 'gallery.platform_failure');
   });
+}
+
+Future<Object?> _throwPlatformFailure(MethodCall call) async {
+  throw PlatformException(code: 'boom');
 }
