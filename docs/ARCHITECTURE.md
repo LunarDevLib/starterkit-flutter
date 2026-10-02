@@ -70,3 +70,11 @@ geolocation/file chooser requests where the platform exposes them, and a bridge 
 is disabled by default. When the bridge is enabled, only the bounded
 `app.getVersion` sample method is exposed; product-specific bridge methods require
 separate review.
+
+
+Service-style optional capabilities that need no platform API live under
+`lib/capabilities/services/`. Analytics, handled Crash Reporting and Remote
+Config use an injected Core `ApiClient`; constructors are inert and the default
+composition does not import them. Keeping these adapters in Dart avoids adding
+vendor/native startup behavior while preserving the same consent, validation,
+failure and activation semantics across Android and iOS.

@@ -27,6 +27,13 @@ void main(List<String> args) {
     'lib/features/sample/domain/sample_repository.dart',
     'lib/features/sample/presentation/sample_detail_page.dart',
     'lib/features/sample/presentation/sample_list_page.dart',
+    'lib/capabilities/services/service_safety.dart',
+    'lib/capabilities/services/analytics.dart',
+    'lib/capabilities/services/crash_reporting.dart',
+    'lib/capabilities/services/remote_config.dart',
+    'docs/capabilities/ANALYTICS.md',
+    'docs/capabilities/CRASH_REPORTING.md',
+    'docs/capabilities/REMOTE_CONFIG.md',
     'android/app/src/main/AndroidManifest.xml',
   ]) {
     requireFile(path);
@@ -76,11 +83,19 @@ void main(List<String> args) {
       }
     }
   }
-  for (final file in _dartSources(root, 'lib')) {
+  final defaultRuntimeSources = <File>[
+    File('${root.path}/lib/main.dart'),
+    ..._dartSources(root, 'lib/app'),
+    ..._dartSources(root, 'lib/features/sample'),
+  ];
+  for (final file in defaultRuntimeSources) {
+    if (!file.existsSync()) continue;
     final content = file.readAsStringSync();
-    if (content.contains('package:starterkit_webview/')) {
+    if (content.contains('package:starterkit_webview/') ||
+        content.contains('/capabilities/') ||
+        RegExp(r'''['"]capabilities/''').hasMatch(content)) {
       failures.add(
-        'default app must not import the optional starterkit_webview capability: ${_relative(root, file)}',
+        'default app must not import optional capability source: ${_relative(root, file)}',
       );
     }
   }

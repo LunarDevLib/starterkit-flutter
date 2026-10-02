@@ -12,9 +12,9 @@ integration verification.
 - Location — planned
 - QR / Barcode — planned
 - Biometric — planned
-- Analytics — planned
-- Crash Reporting — planned
+- [Analytics](ANALYTICS.md) — implemented
+- [Crash Reporting](CRASH_REPORTING.md) — implemented
 - Social Login — planned
 - Native Share — planned
 - App Update — planned
-- Remote Config — planned
+- [Remote Config](REMOTE_CONFIG.md) — implemented

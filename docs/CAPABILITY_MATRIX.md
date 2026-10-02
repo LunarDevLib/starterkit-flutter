@@ -13,11 +13,11 @@ capability.
 | Location | Planned | No | No | Planned |
 | QR / Barcode | Planned | No | No | Planned |
 | Biometric | Planned | No | No | Planned |
-| Analytics | Planned | No | No | Planned |
-| Crash Reporting | Planned | No | No | Planned |
+| Analytics | Yes | Dart unit/contract tests + source/renamed CI | No | [ANALYTICS](capabilities/ANALYTICS.md) |
+| Crash Reporting | Yes | Dart unit/contract tests + source/renamed CI | No | [CRASH_REPORTING](capabilities/CRASH_REPORTING.md) |
 | Social Login | Planned | No | No | Planned |
 | Native Share | Planned | No | No | Planned |
 | App Update | Planned | No | No | Planned |
-| Remote Config | Planned | No | No | Planned |
+| Remote Config | Yes | Dart unit/contract tests + source/renamed CI | No | [REMOTE_CONFIG](capabilities/REMOTE_CONFIG.md) |
 
 Maps and Payments are outside the v1 implementation scope.

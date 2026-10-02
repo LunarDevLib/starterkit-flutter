@@ -77,6 +77,15 @@ Remote WebView content is not functional on the Android baseline until a consumi
 product deliberately adds `android.permission.INTERNET`. The capability itself
 declares no platform permission.
 
+### Service capabilities
+
+Analytics, handled/nonfatal Crash Reporting and Remote Config are implemented in
+`lib/capabilities/services/` using only the existing Starter Core `ApiClient`.
+They add no package, plugin, native registration, permission, constructor I/O,
+background task, vendor initialization or startup network call. Network access
+exists only after a consuming product explicitly constructs a service and invokes
+`submit()` or `fetch()`.
+
 ## Optional future integrations (not implemented)
 
 Dio, cloud SDKs, Sentry, Firebase services, geolocation, image picker, camera, and
