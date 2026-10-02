@@ -94,7 +94,7 @@ void main() {
       );
       expect(
         policy.decide('$starterWebViewBundledLocalOrigin/other/index.html'),
-        StarterWebViewNavigationDecision.externalBrowser,
+        StarterWebViewNavigationDecision.blocked,
       );
     });
   });
