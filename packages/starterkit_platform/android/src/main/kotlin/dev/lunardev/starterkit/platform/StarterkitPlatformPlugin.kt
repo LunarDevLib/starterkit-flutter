@@ -34,6 +34,7 @@ class StarterkitPlatformPlugin :
     private lateinit var channel: MethodChannel
     private var activityBinding: ActivityPluginBinding? = null
     private var pending: PendingOperation? = null
+    private var activityResultListenerRegistered = false
     private var worker: ExecutorService? = null
     private val main = Handler(Looper.getMainLooper())
 
@@ -52,7 +53,6 @@ class StarterkitPlatformPlugin :
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
-        binding.addActivityResultListener(this)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -68,7 +68,10 @@ class StarterkitPlatformPlugin :
     }
 
     private fun detachActivity() {
-        activityBinding?.removeActivityResultListener(this)
+        if (activityResultListenerRegistered) {
+            activityBinding?.removeActivityResultListener(this)
+            activityResultListenerRegistered = false
+        }
         activityBinding = null
         settlePending(mediaOutcome("failure", "media.activity_detached"), deleteFile = true)
     }
@@ -130,6 +133,7 @@ class StarterkitPlatformPlugin :
         intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
         intent.clipData = ClipData.newRawUri("starterkit-camera-output", uri)
         intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        ensureActivityResultListener()
         pending =
             PendingOperation(
                 requestCode = CAMERA_REQUEST,
@@ -165,6 +169,7 @@ class StarterkitPlatformPlugin :
             return
         }
         val intent = galleryIntent()
+        ensureActivityResultListener()
         pending =
             PendingOperation(
                 requestCode = GALLERY_REQUEST,
@@ -325,6 +330,13 @@ class StarterkitPlatformPlugin :
                 Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION,
             )
         }
+    }
+
+    private fun ensureActivityResultListener() {
+        val binding = activityBinding ?: return
+        if (activityResultListenerRegistered) return
+        binding.addActivityResultListener(this)
+        activityResultListenerRegistered = true
     }
 
     private fun work(block: () -> Unit) {
