@@ -10,6 +10,7 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
   private var channel: FlutterMethodChannel?
   private var pending: PendingOperation?
   private var galleryDelegate: AnyObject?
+  private var engineAttached = true
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     let instance = StarterkitPlatformPlugin()
@@ -19,9 +20,19 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     )
     instance.channel = channel
     registrar.addMethodCallDelegate(instance, channel: channel)
+    // Flutter only sends detachFromEngine to published plugin instances.
+    registrar.publish(instance)
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { self.handle(call, result: result) }
+      return
+    }
+    guard engineAttached else {
+      result(mediaOutcome("failure", "media.engine_detached"))
+      return
+    }
     switch call.method {
     case "cameraAvailability":
       result(UIImagePickerController.isSourceTypeAvailable(.camera))
@@ -45,6 +56,22 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     default:
       result(FlutterMethodNotImplemented)
     }
+  }
+
+  public func detachFromEngine(for registrar: FlutterPluginRegistrar) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { self.detachFromEngine(for: registrar) }
+      return
+    }
+    engineAttached = false
+    let operation = pending
+    pending = nil
+    galleryDelegate = nil
+    channel?.setMethodCallHandler(nil)
+    channel = nil
+    operation?.lifecycle.invalidate()
+    operation?.picker?.dismiss(animated: false)
+    operation?.result(mediaOutcome("failure", "media.engine_detached"))
   }
 
   private func cameraPermissionStatus() -> String {
@@ -117,7 +144,7 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     picker.mediaTypes = ["public.image"]
     picker.cameraCaptureMode = .photo
     picker.delegate = self
-    pending = PendingOperation(kind: .camera, result: result, limits: limits)
+    pending = PendingOperation(kind: .camera, result: result, limits: limits, picker: picker)
     host.present(picker, animated: true)
   }
 
@@ -146,53 +173,69 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     configuration.filter = .images
     configuration.selectionLimit = 1
     let picker = PHPickerViewController(configuration: configuration)
+    let operation = PendingOperation(kind: .gallery, result: result, limits: limits, picker: picker)
     let delegate = GalleryPickerDelegate { [weak self] selected in
-      self?.handleGallerySelection(selected)
+      self?.handleGallerySelection(selected, operation: operation)
     }
     galleryDelegate = delegate
     picker.delegate = delegate
-    pending = PendingOperation(kind: .gallery, result: result, limits: limits)
+    pending = operation
     host.present(picker, animated: true)
   }
 
   public func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { self.imagePickerControllerDidCancel(picker) }
+      return
+    }
+    guard let operation = pending, operation.kind == .camera, operation.picker === picker else {
+      return
+    }
     picker.dismiss(animated: true)
-    finishPending(mediaOutcome("cancelled", "camera.cancelled"))
+    finishPending(operation, mediaOutcome("cancelled", "camera.cancelled"))
   }
 
   public func imagePickerController(
     _ picker: UIImagePickerController,
     didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
   ) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async {
+        self.imagePickerController(picker, didFinishPickingMediaWithInfo: info)
+      }
+      return
+    }
+    guard let operation = pending, operation.kind == .camera, operation.picker === picker else {
+      return
+    }
     picker.dismiss(animated: true)
-    guard let operation = pending, operation.kind == .camera else { return }
-    pending = nil
     guard let image = info[.originalImage] as? UIImage else {
-      operation.result(mediaOutcome("invalid", "camera.image_missing"))
+      finishPending(operation, mediaOutcome("invalid", "camera.image_missing"))
       return
     }
     let width = image.cgImage?.width ?? Int(image.size.width * image.scale)
     let height = image.cgImage?.height ?? Int(image.size.height * image.scale)
     guard MediaPolicy.validDimensions(width: width, height: height, limits: operation.limits) else {
-      operation.result(mediaOutcome("invalid", "media.invalid_dimensions"))
+      finishPending(operation, mediaOutcome("invalid", "media.invalid_dimensions"))
       return
     }
 
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-      guard let self else { return }
+    guard operation.lifecycle.queueWork() else { return }
+    let destination = newTempURL(prefix: "camera", extension: "jpg")
+    DispatchQueue.global(qos: .userInitiated).async { [self] in
+      guard operation.lifecycle.startWork() else { return }
       guard let data = image.jpegData(compressionQuality: 0.95) else {
-        DispatchQueue.main.async {
-          operation.result(mediaOutcome("failure", "camera.encode_failed"))
-        }
+        self.completeWork(operation, mediaOutcome("failure", "camera.encode_failed"))
         return
       }
       guard !data.isEmpty, data.count <= operation.limits.maxBytes else {
-        DispatchQueue.main.async {
-          operation.result(mediaOutcome("invalid", "media.too_large"))
-        }
+        self.completeWork(operation, mediaOutcome("invalid", "media.too_large"))
         return
       }
-      let destination = self.newTempURL(prefix: "camera", extension: "jpg")
+      guard !operation.lifecycle.isInvalidated else {
+        self.completeWork(operation, mediaOutcome("failure", "media.engine_detached"))
+        return
+      }
       do {
         try data.write(to: destination, options: .atomic)
         let metadata = MediaMetadata(
@@ -202,93 +245,99 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
           height: height,
           mimeType: "image/jpeg"
         )
-        DispatchQueue.main.async {
-          operation.result(mediaOutcome("success", "media.success", image: metadata))
-        }
+        self.completeWork(
+          operation, mediaOutcome("success", "media.success", image: metadata), output: destination
+        )
       } catch {
         try? FileManager.default.removeItem(at: destination)
-        DispatchQueue.main.async {
-          operation.result(mediaOutcome("failure", "camera.write_failed"))
-        }
+        self.completeWork(operation, mediaOutcome("failure", "camera.write_failed"))
       }
     }
   }
 
   @available(iOS 14.0, *)
-  private func handleGallerySelection(_ selected: PHPickerResult?) {
-    guard let operation = pending, operation.kind == .gallery else { return }
-    pending = nil
-    galleryDelegate = nil
+  private func handleGallerySelection(_ selected: PHPickerResult?, operation: PendingOperation) {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard pending === operation, operation.kind == .gallery else { return }
     guard let selected else {
-      operation.result(mediaOutcome("cancelled", "gallery.cancelled"))
+      finishPending(operation, mediaOutcome("cancelled", "gallery.cancelled"))
       return
     }
     let provider = selected.itemProvider
     guard provider.hasItemConformingToTypeIdentifier("public.image") else {
-      operation.result(mediaOutcome("invalid", "gallery.invalid_type"))
+      finishPending(operation, mediaOutcome("invalid", "gallery.invalid_type"))
       return
     }
+    guard operation.lifecycle.queueWork() else { return }
+    galleryDelegate = nil
+    let destination = newTempURL(prefix: "gallery", extension: "img")
     provider.loadFileRepresentation(forTypeIdentifier: "public.image") {
-      [weak self] source, error in
-      guard let self else { return }
+      [self] source, error in
+      guard operation.lifecycle.startWork() else { return }
       guard error == nil, let source else {
-        DispatchQueue.main.async {
-          operation.result(mediaOutcome("failure", "gallery.read_failed"))
-        }
+        self.completeWork(operation, mediaOutcome("failure", "gallery.read_failed"))
         return
       }
-      let outcome = self.copyAndValidateGallery(source, limits: operation.limits)
-      DispatchQueue.main.async { operation.result(outcome) }
+      let completed = self.copyAndValidateGallery(
+        source, destination: destination, operation: operation
+      )
+      self.completeWork(operation, completed.outcome, output: completed.output)
     }
   }
 
   @available(iOS 14.0, *)
-  private func copyAndValidateGallery(_ source: URL, limits: MediaLimits) -> [String: Any] {
-    guard source.isFileURL else {
-      return mediaOutcome("invalid", "gallery.invalid_file")
-    }
-    let attributes = try? FileManager.default.attributesOfItem(atPath: source.path)
-    guard let size = (attributes?[.size] as? NSNumber)?.intValue, size > 0 else {
-      return mediaOutcome("invalid", "gallery.empty_file")
-    }
-    guard size <= limits.maxBytes else {
-      return mediaOutcome("invalid", "media.too_large")
-    }
-    guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil),
-      let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil)
-        as? [CFString: Any],
-      let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
-      let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
-      MediaPolicy.validDimensions(width: width, height: height, limits: limits)
-    else {
-      return mediaOutcome("invalid", "media.invalid_dimensions")
-    }
-
-    guard let typeIdentifier = CGImageSourceGetType(imageSource) as String?,
-      let mime = Self.mimeType(for: typeIdentifier),
-      mime.utf8.count <= 128
-    else {
-      return mediaOutcome("invalid", "media.invalid_type")
-    }
-
-    let fileExtension = source.pathExtension.isEmpty ? "image" : source.pathExtension
-    let destination = newTempURL(prefix: "gallery", extension: fileExtension)
+  private func copyAndValidateGallery(
+    _ source: URL, destination: URL, operation: PendingOperation
+  ) -> (outcome: [String: Any], output: URL?) {
+    guard source.isFileURL else { return (mediaOutcome("invalid", "gallery.invalid_file"), nil) }
+    let limits = operation.limits
     do {
-      try FileManager.default.copyItem(at: source, to: destination)
-      return mediaOutcome(
-        "success",
-        "media.success",
-        image: MediaMetadata(
-          path: destination.path,
-          byteLength: size,
-          width: width,
-          height: height,
-          mimeType: mime
-        )
+      let verified = try MediaFilePolicy.copyAndValidate(
+        source: source,
+        destination: destination,
+        maxBytes: limits.maxBytes,
+        maxPixels: limits.maxPixels,
+        isCancelled: { operation.lifecycle.isInvalidated }
       )
+      guard MediaPolicy.validDimensions(
+        width: verified.width,
+        height: verified.height,
+        limits: limits
+      ) else {
+        try? FileManager.default.removeItem(at: destination)
+        return (mediaOutcome("invalid", "media.invalid_dimensions"), nil)
+      }
+      guard let mime = Self.mimeType(for: verified.mimeType), mime.utf8.count <= 128 else {
+        try? FileManager.default.removeItem(at: destination)
+        return (mediaOutcome("invalid", "media.invalid_type"), nil)
+      }
+      return (
+        mediaOutcome(
+          "success",
+          "media.success",
+          image: MediaMetadata(
+            path: destination.path,
+            byteLength: verified.byteLength,
+            width: verified.width,
+            height: verified.height,
+            mimeType: mime
+          )
+        ), destination
+      )
+    } catch MediaFileError.tooLarge {
+      return (mediaOutcome("invalid", "media.too_large"), nil)
+    } catch MediaFileError.invalidImage {
+      return (mediaOutcome("invalid", "media.invalid_image"), nil)
+    } catch MediaFileError.invalidDimensions {
+      return (mediaOutcome("invalid", "media.invalid_dimensions"), nil)
+    } catch MediaFileError.invalidSource {
+      return (mediaOutcome("invalid", "gallery.invalid_file"), nil)
+    } catch MediaFileError.empty {
+      return (mediaOutcome("invalid", "gallery.empty_file"), nil)
+    } catch MediaFileError.cancelled {
+      return (mediaOutcome("failure", "media.engine_detached"), nil)
     } catch {
-      try? FileManager.default.removeItem(at: destination)
-      return mediaOutcome("failure", "gallery.copy_failed")
+      return (mediaOutcome("failure", "gallery.copy_failed"), nil)
     }
   }
 
@@ -339,8 +388,22 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     }
   }
 
-  private func finishPending(_ outcome: [String: Any]) {
-    guard let operation = pending else { return }
+  private func completeWork(
+    _ operation: PendingOperation, _ outcome: [String: Any], output: URL? = nil
+  ) {
+    guard operation.lifecycle.completeWork(output: output) else { return }
+    DispatchQueue.main.async { self.finishPending(operation, outcome, fromWorker: true) }
+  }
+
+  private func finishPending(
+    _ operation: PendingOperation, _ outcome: [String: Any], fromWorker: Bool = false
+  ) {
+    dispatchPrecondition(condition: .onQueue(.main))
+    guard pending === operation else {
+      operation.lifecycle.invalidate()
+      return
+    }
+    guard operation.lifecycle.settle(fromWorker: fromWorker) else { return }
     pending = nil
     galleryDelegate = nil
     operation.result(outcome)
@@ -374,10 +437,24 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     case gallery
   }
 
-  private struct PendingOperation {
+  private final class PendingOperation {
     let kind: PendingKind
     let result: FlutterResult
     let limits: MediaLimits
+    // Picker references are read only on main; workers must not retain UI objects.
+    weak var picker: UIViewController?
+    let lifecycle = MediaOperationLifecycle { output in
+      try? FileManager.default.removeItem(at: output)
+    }
+
+    init(
+      kind: PendingKind, result: @escaping FlutterResult, limits: MediaLimits, picker: UIViewController
+    ) {
+      self.kind = kind
+      self.result = result
+      self.limits = limits
+      self.picker = picker
+    }
   }
 }
 
@@ -390,6 +467,10 @@ private final class GalleryPickerDelegate: NSObject, PHPickerViewControllerDeleg
   }
 
   func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+    guard Thread.isMainThread else {
+      DispatchQueue.main.async { self.picker(picker, didFinishPicking: results) }
+      return
+    }
     picker.dismiss(animated: true)
     completion(results.first)
   }

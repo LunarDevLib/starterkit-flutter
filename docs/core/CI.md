@@ -18,6 +18,17 @@ CI does not install SDK tools or alter global SDK configuration; a missing SDK
 tool or unreadable APK manifest fails the gate instead of producing a static
 success claim.
 
+The macOS source and renamed-copy lanes also verify the actual built iOS
+simulator and unsigned release `Runner.app/Info.plist` files with
+`tool/verify_ios_baseline.py`, requiring the corresponding bundle ID, no
+privacy usage-description, background-mode, ATS, or Bonjour activation keys, and
+`MinimumOSVersion=15.0`.
+Available plist files are uploaded as short-retention artifacts even when a
+later verification step fails. The source's iOS 13 deployment declarations are
+automatically migrated by the frozen Flutter 3.47.4 build; iOS 15 is the
+effective supported runtime floor. This is build-plist evidence, not device
+execution evidence.
+
 Native unit-test wiring runs Android's
 `:starterkit_preferences:testDebugUnitTest` task for both source and renamed
 copies, and runs `swift test --package-path packages/starterkit_preferences/ios`

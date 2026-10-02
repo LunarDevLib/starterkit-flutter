@@ -181,4 +181,48 @@ void main() {
       lessThan(renamedBuild),
     );
   });
+
+  test('iOS plist gate derives source identity and pins renamed identity', () {
+    final sourceJob = source.indexOf(
+      'name: Validate source and compile iOS targets',
+    );
+    final renamedJob = source.indexOf(
+      'name: Bootstrap fresh copy and iOS simulator build',
+    );
+    expect(sourceJob, isNonNegative);
+    expect(renamedJob, greaterThan(sourceJob));
+    final sourceLane = source.substring(sourceJob, renamedJob);
+    final renamedLane = source.substring(renamedJob);
+
+    expect(sourceLane, contains('source_bundle_id_assertion=()'));
+    expect(
+      RegExp(
+        r'if \[ "\$IS_TEMPLATE" = "true" \]; then\s+'
+        r'source_bundle_id_assertion=\(--bundle-id '
+        r'[a-z][a-z0-9]*(?:\.[a-z][a-z0-9]*)+\)\s+fi',
+      ).hasMatch(sourceLane),
+      isTrue,
+    );
+    final sourceGates = sourceLane
+        .split('\n')
+        .where((line) => line.contains('python3 tool/verify_ios_baseline.py'))
+        .toList();
+    expect(sourceGates, hasLength(2));
+    for (final gate in sourceGates) {
+      expect(
+        gate,
+        contains('--xcode-project ios/Runner.xcodeproj/project.pbxproj'),
+      );
+      expect(gate, contains('--minimum-os-version 15.0'));
+      expect(gate, contains(r'"${source_bundle_id_assertion[@]}"'));
+      expect(RegExp(r'--bundle-id(?:\s|=)').hasMatch(gate), isFalse);
+    }
+    expect(
+      renamedLane,
+      contains(
+        '--bundle-id dev.example.sampleportable --minimum-os-version 15.0',
+      ),
+    );
+    expect(renamedLane, isNot(contains('--xcode-project')));
+  });
 }

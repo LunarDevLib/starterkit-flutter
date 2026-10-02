@@ -87,6 +87,11 @@ supplied by the consuming product before permission request/capture is allowed.
 
 Permission request and capture remain separate explicit operations.
 
+The frozen project builds with Flutter 3.47.4. Although its checked-in iOS
+deployment declarations say iOS 13, Flutter's build migration raises the
+effective built minimum to iOS 15. iOS 15 is therefore the supported runtime
+floor; the source declaration is not evidence of iOS 13 support.
+
 ## Result bounds
 
 Default limits:
@@ -138,3 +143,15 @@ policy before upload or persistence.
 Android uses an external camera intent rather than an embedded camera preview.
 iOS uses the system camera picker. The Starter Kit does not claim device-level
 capture behavior from simulator/unit evidence alone.
+
+On Android, Camera and Gallery share 256 request-code allocations per app-process
+lifetime (`0x5300`–`0x53ff`). Each launch attempt that allocates a code consumes it,
+even if launch fails; codes are never reused after detach, failure or plugin
+replacement, preventing stale external ActivityResults from being reassigned to
+later media operations. Exhaustion returns `MediaResultKind.failure` with code
+`media.request_codes_exhausted` before picker launch; the capability does not
+automatically restart the process. Availability and permission checks do not
+consume codes. Consuming products must keep this range exclusive to Media:
+Android provides no global request-code registry guaranteeing freedom from
+collisions with deliberately overlapping plugins. This Android-only limit is
+neither an iOS limit nor a product-delivery guarantee.

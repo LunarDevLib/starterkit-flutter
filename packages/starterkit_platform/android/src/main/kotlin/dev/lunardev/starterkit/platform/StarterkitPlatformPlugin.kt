@@ -119,6 +119,11 @@ class StarterkitPlatformPlugin :
             result.success(mediaOutcome("unavailable", "camera.unavailable"))
             return
         }
+        val requestCode = MediaRequestCodes.allocate()
+        if (requestCode == null) {
+            result.success(mediaOutcome("failure", "media.request_codes_exhausted"))
+            return
+        }
         val intent = cameraIntent()
 
         val file = newTempFile("camera", ".jpg")
@@ -136,14 +141,15 @@ class StarterkitPlatformPlugin :
         ensureActivityResultListener()
         pending =
             PendingOperation(
-                requestCode = CAMERA_REQUEST,
+                requestCode = requestCode,
+                kind = MediaOperationKind.CAMERA,
                 result = result,
                 limits = limits,
                 file = file,
                 grantedUri = uri,
             )
         try {
-            activity.startActivityForResult(intent, CAMERA_REQUEST)
+            activity.startActivityForResult(intent, requestCode)
         } catch (_: ActivityNotFoundException) {
             revoke(uri)
             settlePending(mediaOutcome("unavailable", "camera.unavailable"), deleteFile = true)
@@ -168,16 +174,22 @@ class StarterkitPlatformPlugin :
             result.success(mediaOutcome("invalid", "media.invalid_limits"))
             return
         }
+        val requestCode = MediaRequestCodes.allocate()
+        if (requestCode == null) {
+            result.success(mediaOutcome("failure", "media.request_codes_exhausted"))
+            return
+        }
         val intent = galleryIntent()
         ensureActivityResultListener()
         pending =
             PendingOperation(
-                requestCode = GALLERY_REQUEST,
+                requestCode = requestCode,
+                kind = MediaOperationKind.GALLERY,
                 result = result,
                 limits = limits,
             )
         try {
-            activity.startActivityForResult(intent, GALLERY_REQUEST)
+            activity.startActivityForResult(intent, requestCode)
         } catch (_: ActivityNotFoundException) {
             settlePending(mediaOutcome("unavailable", "gallery.unavailable"), deleteFile = false)
         } catch (_: Throwable) {
@@ -188,89 +200,109 @@ class StarterkitPlatformPlugin :
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
         val operation = pending ?: return false
         if (operation.requestCode != requestCode) return false
-        pending = null
+        // A duplicate belonging to us is consumed, but must never start another worker.
+        if (!operation.state.acceptActivityResult(requestCode)) return true
 
-        if (requestCode == CAMERA_REQUEST) {
+        if (operation.kind == MediaOperationKind.CAMERA) {
             operation.grantedUri?.let(::revoke)
             if (resultCode != Activity.RESULT_OK) {
-                operation.file?.delete()
-                operation.result.success(mediaOutcome("cancelled", "camera.cancelled"))
+                complete(
+                    operation,
+                    MediaPolicy.activityResultFailure(
+                        resultCode,
+                        Activity.RESULT_CANCELED,
+                        "camera.cancelled",
+                        "camera.capture_failed",
+                    ),
+                    deleteFile = true,
+                )
                 return true
             }
             val file = operation.file
             if (file == null) {
-                operation.result.success(mediaOutcome("failure", "camera.output_missing"))
+                complete(operation, mediaOutcome("failure", "camera.output_missing"), deleteFile = true)
                 return true
             }
             work {
-                val outcome = validateFile(file, operation.limits, "image/jpeg", "camera")
-                main.post {
-                    if ((outcome["kind"] as? String) != "success") file.delete()
-                    operation.result.success(outcome)
+                if (!operation.state.startWork()) return@work
+                val outcome = runCatching { validateFile(file, operation.limits, "camera") }
+                    .getOrElse { mediaOutcome("failure", "camera.read_failed") }
+                if (operation.state.finishWork(keepFile = outcome["kind"] == "success")) {
+                    main.post {
+                        complete(operation, outcome, deleteFile = outcome["kind"] != "success")
+                    }
                 }
             }
             return true
         }
 
         if (resultCode != Activity.RESULT_OK) {
-            operation.result.success(mediaOutcome("cancelled", "gallery.cancelled"))
+            complete(
+                operation,
+                MediaPolicy.activityResultFailure(
+                    resultCode,
+                    Activity.RESULT_CANCELED,
+                    "gallery.cancelled",
+                    "gallery.pick_failed",
+                ),
+                deleteFile = true,
+            )
             return true
         }
         val uri = data?.data
         if (uri == null || uri.scheme != "content") {
-            operation.result.success(mediaOutcome("invalid", "gallery.invalid_uri"))
+            complete(operation, mediaOutcome("invalid", "gallery.invalid_uri"), deleteFile = true)
             return true
         }
         work {
-            val outcome = copyAndValidateGallery(uri, operation.limits)
-            main.post { operation.result.success(outcome) }
+            if (!operation.state.startWork()) return@work
+            val outcome = copyAndValidateGallery(uri, operation)
+            if (operation.state.finishWork(keepFile = outcome["kind"] == "success")) {
+                main.post { complete(operation, outcome, deleteFile = outcome["kind"] != "success") }
+            }
         }
         return true
     }
 
-    private fun copyAndValidateGallery(uri: Uri, limits: MediaLimits): Map<String, Any> {
-        val resolver = context.contentResolver
-        val declaredMime = resolver.getType(uri)
-        if (declaredMime != null && !declaredMime.startsWith("image/")) {
-            return mediaOutcome("invalid", "gallery.invalid_type")
-        }
-        val file = newTempFile("gallery", ".image")
-        val copied =
-            runCatching {
-                resolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(file).use { output ->
-                        val buffer = ByteArray(16 * 1024)
-                        var total = 0L
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            total += count
-                            if (total > limits.maxBytes) {
-                                throw MediaTooLargeException()
-                            }
-                            output.write(buffer, 0, count)
-                        }
-                        total
+    private fun copyAndValidateGallery(uri: Uri, operation: PendingOperation): Map<String, Any> {
+        val limits = operation.limits
+        return try {
+            if (!operation.state.isActive()) return mediaOutcome("failure", "media.activity_detached")
+            val resolver = context.contentResolver
+            val declaredMime = resolver.getType(uri)
+            if (declaredMime != null && !declaredMime.startsWith("image/")) {
+                return mediaOutcome("invalid", "gallery.invalid_type")
+            }
+            val tempFile = newTempFile("gallery", ".image")
+            if (!operation.state.trackWorkerFile(tempFile)) {
+                return mediaOutcome("failure", "media.activity_detached")
+            }
+            val copied = resolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    val buffer = ByteArray(16 * 1024)
+                    var total = 0L
+                    while (true) {
+                        if (!operation.state.isActive()) throw IllegalStateException("operation detached")
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > limits.maxBytes) throw MediaTooLargeException()
+                        output.write(buffer, 0, count)
                     }
-                } ?: throw IllegalStateException("missing input")
-            }
-        if (copied.isFailure) {
-            file.delete()
-            return if (copied.exceptionOrNull() is MediaTooLargeException) {
-                mediaOutcome("invalid", "media.too_large")
-            } else {
-                mediaOutcome("failure", "gallery.read_failed")
-            }
+                    total
+                }
+            } ?: throw IllegalStateException("missing input")
+            if (copied <= 0) throw IllegalStateException("empty input")
+            if (!operation.state.isActive()) return mediaOutcome("failure", "media.activity_detached")
+            validateFile(tempFile, limits, "gallery")
+        } catch (error: Throwable) {
+            MediaPolicy.galleryFailure(error)
         }
-        val outcome = validateFile(file, limits, declaredMime, "gallery")
-        if ((outcome["kind"] as? String) != "success") file.delete()
-        return outcome
     }
 
     private fun validateFile(
         file: File,
         limits: MediaLimits,
-        declaredMime: String?,
         prefix: String,
     ): Map<String, Any> {
         if (!MediaPolicy.ownedPath(mediaRoot(), file) || !file.isFile) {
@@ -285,9 +317,25 @@ class StarterkitPlatformPlugin :
         if (!MediaPolicy.validDimensions(options.outWidth, options.outHeight, limits)) {
             return mediaOutcome("invalid", "media.invalid_dimensions")
         }
-        val mime = options.outMimeType ?: declaredMime
+        val mime = options.outMimeType
         if (mime == null || !mime.startsWith("image/") || mime.length > 128) {
             return mediaOutcome("invalid", "media.invalid_type")
+        }
+        val sample = MediaPolicy.sampleSize(options.outWidth, options.outHeight, limits.maxPixels)
+        val decoded =
+            BitmapFactory.decodeFile(
+                file.path,
+                BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                },
+            ) ?: return mediaOutcome("invalid", "media.invalid_content")
+        try {
+            if (!MediaPolicy.validDecodedContent(decoded.width, decoded.height)) {
+                return mediaOutcome("invalid", "media.invalid_content")
+            }
+        } finally {
+            decoded.recycle()
         }
         return mediaOutcome(
             "success",
@@ -346,25 +394,33 @@ class StarterkitPlatformPlugin :
 
     private fun settlePending(outcome: Map<String, Any>, deleteFile: Boolean) {
         val operation = pending ?: return
-        pending = null
         operation.grantedUri?.let(::revoke)
-        if (deleteFile) operation.file?.delete()
+        if (deleteFile) operation.state.invalidate()
+        complete(operation, outcome, deleteFile)
+    }
+
+    private fun complete(operation: PendingOperation, outcome: Map<String, Any>, deleteFile: Boolean) {
+        if (pending !== operation || !operation.state.settle()) {
+            // Rejected success owns a completed output too; never key cleanup to its outcome.
+            operation.state.invalidate()
+            return
+        }
+        pending = null
+        if (deleteFile) operation.state.invalidate() else operation.state.forgetFile()
         operation.result.success(outcome)
     }
 
     private data class PendingOperation(
         val requestCode: Int,
+        val kind: MediaOperationKind,
         val result: MethodChannel.Result,
         val limits: MediaLimits,
         val file: File? = null,
         val grantedUri: Uri? = null,
+        val state: MediaOperationState = MediaOperationState(requestCode, file),
     )
-
-    private class MediaTooLargeException : RuntimeException()
 
     companion object {
         private const val CHANNEL = "starterkit/platform/media"
-        private const val CAMERA_REQUEST = 0x5341
-        private const val GALLERY_REQUEST = 0x5342
     }
 }
