@@ -63,11 +63,14 @@ void main() {
         final manifest = File(
           '${fixture.path}/android/app/src/main/AndroidManifest.xml',
         );
+        final content = manifest.readAsStringSync();
+        final manifestTagEnd = content.indexOf('>');
+        expect(manifestTagEnd, greaterThan(0));
         manifest.writeAsStringSync(
-          manifest.readAsStringSync().replaceFirst(
-            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">',
-            '<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n'
-                '    <uses-permission android:name="android.permission.INTERNET" />',
+          content.replaceRange(
+            manifestTagEnd + 1,
+            manifestTagEnd + 1,
+            '\n    <uses-permission android:name="android.permission.INTERNET" />',
           ),
         );
         final result = await _runValidator(fixture.path, release: false);

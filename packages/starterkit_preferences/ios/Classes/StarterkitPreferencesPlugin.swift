@@ -27,7 +27,7 @@ public final class StarterkitPreferencesPlugin: NSObject, FlutterPlugin {
     channel = nil
   }
 
-  private func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+  public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     handler.handle(method: call.method, arguments: call.arguments) { outcome in
       switch outcome {
       case .success(let value): result(value)
