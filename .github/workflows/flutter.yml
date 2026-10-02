@@ -29,18 +29,28 @@ jobs:
       - name: Resolve locked connectivity package
         working-directory: packages/starterkit_connectivity
         run: flutter pub get --enforce-lockfile
+      - name: Resolve locked preferences package
+        working-directory: packages/starterkit_preferences
+        run: flutter pub get --enforce-lockfile
       - run: flutter gen-l10n
       - run: dart run tool/validate_template.dart
       - run: >-
           dart format --output=none --set-exit-if-changed
           lib test tool packages/starterkit_connectivity/lib
-          packages/starterkit_connectivity/test
+          packages/starterkit_connectivity/test packages/starterkit_preferences/lib
+          packages/starterkit_preferences/test
       - run: flutter analyze
       - name: Analyze connectivity package
         working-directory: packages/starterkit_connectivity
         run: flutter analyze --no-pub
       - name: Test connectivity package
         working-directory: packages/starterkit_connectivity
+        run: flutter test --no-pub
+      - name: Analyze preferences package
+        working-directory: packages/starterkit_preferences
+        run: flutter analyze --no-pub
+      - name: Test preferences package
+        working-directory: packages/starterkit_preferences
         run: flutter test --no-pub
       - name: Test Android manifest verifier fixtures
         run: python3 -m unittest discover -s test/tool -p 'test_*.py'
@@ -53,29 +63,104 @@ jobs:
           else
             flutter test --exclude-tags template-only
           fi
-      - run: flutter build apk --debug
-      - name: Verify debug APK Android baseline
-        run: >-
-          python3 tool/verify_android_baseline.py
-          --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
-      - run: flutter build apk --release
-      - name: Verify unsigned release APK Android baseline
-        run: >-
-          python3 tool/verify_android_baseline.py
-          --apk build/app/outputs/flutter-apk/app-release.apk --variant release
-      - name: Upload Android APK evidence
+      - name: Build Android debug APK
+        id: android-debug-apk
+        run: flutter build apk --debug
+      - name: Run preferences Android unit tests
+        if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
+        run: ./android/gradlew --project-dir android :starterkit_preferences:testDebugUnitTest
+      - name: Capture Android runtime dependency graphs
+        id: android-dependency-graphs
+        if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          output_dir="build/ci-android-diagnostics"
+          mkdir -p "$output_dir"
+          failed=0
+          for configuration in debugRuntimeClasspath releaseRuntimeClasspath; do
+            report="$output_dir/${configuration}.txt"
+            if ./android/gradlew --project-dir android :app:dependencies --configuration "$configuration" >"$report" 2>&1; then
+              echo "Captured $configuration dependency graph at $report"
+            else
+              echo "ERROR: failed to capture $configuration dependency graph; see $report" >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Build Android release APK
+        id: android-release-apk
+        if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
+        run: flutter build apk --release
+      - name: Capture Android APK manifest XML
+        if: always()
+        run: |
+          set -euo pipefail
+          output_dir="build/app/outputs/flutter-apk/manifest-diagnostics"
+          debug_apk="build/app/outputs/flutter-apk/app-debug.apk"
+          release_apk="build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$debug_apk" ] && [ ! -f "$release_apk" ]; then
+            echo "No Android APK was produced; artifact upload will warn if no other diagnostics exist."
+            exit 0
+          fi
+
+          apkanalyzer="$(command -v apkanalyzer || true)"
+          if [ -z "$apkanalyzer" ]; then
+            for sdk_root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
+              [ -n "$sdk_root" ] || continue
+              candidate="$sdk_root/cmdline-tools/latest/bin/apkanalyzer"
+              if [ -x "$candidate" ]; then
+                apkanalyzer="$candidate"
+                break
+              fi
+            done
+          fi
+          if [ -z "$apkanalyzer" ]; then
+            echo "ERROR: apkanalyzer is required to capture built APK manifests." >&2
+            exit 1
+          fi
+
+          mkdir -p "$output_dir"
+          failed=0
+          for variant in debug release; do
+            apk="build/app/outputs/flutter-apk/app-${variant}.apk"
+            if [ ! -f "$apk" ]; then
+              echo "No ${variant} APK available for manifest capture."
+              continue
+            fi
+            if "$apkanalyzer" manifest print "$apk" >"$output_dir/app-${variant}-manifest.xml" 2>>"$output_dir/apkanalyzer.stderr.log"; then
+              echo "Captured ${variant} APK manifest."
+            else
+              echo "ERROR: failed to capture ${variant} APK manifest." >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Upload Android build and manifest diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-apks-source
           path: |
             build/app/outputs/flutter-apk/app-debug.apk
             build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
+            build/app/outputs/flutter-apk/manifest-diagnostics/
+            build/ci-android-diagnostics/
+          if-no-files-found: warn
           retention-days: 7
+      - name: Verify debug APK Android baseline
+        if: ${{ always() && steps.android-debug-apk.outcome == 'success' }}
+        run: >-
+          python3 tool/verify_android_baseline.py
+          --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
+      - name: Verify release APK Android baseline
+        if: ${{ always() && steps.android-release-apk.outcome == 'success' }}
+        run: >-
+          python3 tool/verify_android_baseline.py
+          --apk build/app/outputs/flutter-apk/app-release.apk --variant release
 
   renamed-copy:
     needs: verify
-    if: needs.verify.outputs.is_template == 'true'
+    if: ${{ always() && needs.verify.outputs.is_template == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -127,33 +212,120 @@ jobs:
           flutter pub get --enforce-lockfile
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
           flutter analyze
           # Bootstrap tests assume the unrenamed template fixtures; exclude them from the renamed copy.
           flutter test --exclude-tags template-only
           python3 -m unittest discover -s test/tool -p 'test_*.py'
-          cd packages/starterkit_connectivity
-          flutter pub get --enforce-lockfile
-          flutter analyze --no-pub
-          flutter test --no-pub
-          cd ../..
-          flutter build apk --debug
-          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
-          flutter build apk --release
-          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-release.apk --variant release
-      - name: Upload renamed Android APK evidence
+          (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+      - name: Build renamed Android debug APK
+        id: renamed-android-debug-apk
+        if: ${{ success() }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: flutter build apk --debug
+      - name: Run renamed preferences Android unit tests
+        if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: ./android/gradlew --project-dir android :starterkit_preferences:testDebugUnitTest
+      - name: Capture renamed Android runtime dependency graphs
+        id: android-dependency-graphs
+        if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: |
+          set -euo pipefail
+          output_dir="build/ci-android-diagnostics"
+          mkdir -p "$output_dir"
+          failed=0
+          for configuration in debugRuntimeClasspath releaseRuntimeClasspath; do
+            report="$output_dir/${configuration}.txt"
+            if ./android/gradlew --project-dir android :app:dependencies --configuration "$configuration" >"$report" 2>&1; then
+              echo "Captured $configuration dependency graph at $report"
+            else
+              echo "ERROR: failed to capture $configuration dependency graph; see $report" >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Build renamed Android release APK
+        id: renamed-android-release-apk
+        if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: flutter build apk --release
+      - name: Capture renamed APK manifest XML
+        if: always()
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: |
+          set -euo pipefail
+          output_dir="build/app/outputs/flutter-apk/manifest-diagnostics"
+          debug_apk="build/app/outputs/flutter-apk/app-debug.apk"
+          release_apk="build/app/outputs/flutter-apk/app-release.apk"
+          if [ ! -f "$debug_apk" ] && [ ! -f "$release_apk" ]; then
+            echo "No renamed Android APK was produced; artifact upload will warn if no other diagnostics exist."
+            exit 0
+          fi
+
+          apkanalyzer="$(command -v apkanalyzer || true)"
+          if [ -z "$apkanalyzer" ]; then
+            for sdk_root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}"; do
+              [ -n "$sdk_root" ] || continue
+              candidate="$sdk_root/cmdline-tools/latest/bin/apkanalyzer"
+              if [ -x "$candidate" ]; then
+                apkanalyzer="$candidate"
+                break
+              fi
+            done
+          fi
+          if [ -z "$apkanalyzer" ]; then
+            echo "ERROR: apkanalyzer is required to capture renamed APK manifests." >&2
+            exit 1
+          fi
+
+          mkdir -p "$output_dir"
+          failed=0
+          for variant in debug release; do
+            apk="build/app/outputs/flutter-apk/app-${variant}.apk"
+            if [ ! -f "$apk" ]; then
+              echo "No renamed ${variant} APK available for manifest capture."
+              continue
+            fi
+            if "$apkanalyzer" manifest print "$apk" >"$output_dir/app-${variant}-manifest.xml" 2>>"$output_dir/apkanalyzer.stderr.log"; then
+              echo "Captured renamed ${variant} APK manifest."
+            else
+              echo "ERROR: failed to capture renamed ${variant} APK manifest." >&2
+              failed=1
+            fi
+          done
+          exit "$failed"
+      - name: Upload renamed Android build and manifest diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: android-apks-renamed
           path: |
             ${{ runner.temp }}/renamed-copy/build/app/outputs/flutter-apk/app-debug.apk
             ${{ runner.temp }}/renamed-copy/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
+            ${{ runner.temp }}/renamed-copy/build/app/outputs/flutter-apk/manifest-diagnostics/
+            ${{ runner.temp }}/renamed-copy/build/ci-android-diagnostics/
+          if-no-files-found: warn
           retention-days: 7
+      - name: Verify renamed debug APK Android baseline
+        if: ${{ always() && steps.renamed-android-debug-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: >-
+          python3 tool/verify_android_baseline.py
+          --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
+      - name: Verify renamed release APK Android baseline
+        if: ${{ always() && steps.renamed-android-release-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: >-
+          python3 tool/verify_android_baseline.py
+          --apk build/app/outputs/flutter-apk/app-release.apk --variant release
 
   ios-simulator:
     runs-on: macos-latest
     needs: verify
+    if: ${{ always() && !cancelled() && needs.verify.outputs.is_template != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -168,9 +340,10 @@ jobs:
           set -euo pipefail
           flutter pub get --enforce-lockfile
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
           flutter analyze
           if [ "$IS_TEMPLATE" = "true" ]; then
             flutter test
@@ -178,10 +351,11 @@ jobs:
             flutter test --exclude-tags template-only
           fi
           python3 -m unittest discover -s test/tool -p 'test_*.py'
+          swift test --package-path packages/starterkit_preferences/ios
           flutter build ios --simulator --no-codesign
           flutter build ios --release --no-codesign
       - name: Bootstrap fresh copy and iOS simulator build
-        if: needs.verify.outputs.is_template == 'true'
+        if: ${{ always() && !cancelled() && needs.verify.outputs.is_template == 'true' }}
         run: |
           set -euo pipefail
           rm -rf "${{ runner.temp }}/ios-renamed-copy"
@@ -190,11 +364,13 @@ jobs:
           dart tool/bootstrap_project.dart --package-name sample_portable --app-name 'Sample Portable' --bundle-id dev.example.sampleportable --scheme sample-portable
           flutter pub get --enforce-lockfile
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
           flutter analyze
           flutter test --exclude-tags template-only
           python3 -m unittest discover -s test/tool -p 'test_*.py'
+          swift test --package-path packages/starterkit_preferences/ios
           flutter build ios --simulator --no-codesign
           flutter build ios --release --no-codesign

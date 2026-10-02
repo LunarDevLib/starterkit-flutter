@@ -2,9 +2,11 @@
 
 CI pins Flutter 3.47.4. The source and fresh renamed-copy lanes resolve the root
 lockfile with `flutter pub get --enforce-lockfile` and independently resolve,
-analyze, and test the local `starterkit_connectivity` package against its own
-lockfile. Formatting includes that package's Dart `lib` and `test` paths without
-formatting native or generated files.
+analyze, and test the local `starterkit_connectivity` and
+`starterkit_preferences` packages against their own lockfiles. Formatting
+includes both packages' Dart `lib` and `test` paths without formatting native
+or generated files. These are Dart package checks; they do not claim native
+plugin test coverage.
 
 Linux and macOS each run localization generation, template validation,
 formatting, root analysis/tests, and the package checks. The macOS job performs
@@ -15,6 +17,17 @@ source and renamed-copy jobs compile debug and unsigned release APKs and run
 CI does not install SDK tools or alter global SDK configuration; a missing SDK
 tool or unreadable APK manifest fails the gate instead of producing a static
 success claim.
+
+Native unit-test wiring runs Android's
+`:starterkit_preferences:testDebugUnitTest` task for both source and renamed
+copies, and runs `swift test --package-path packages/starterkit_preferences/ios`
+for both source and renamed copies on macOS before either unsigned iOS build.
+These are host-side unit tests, not device or simulator execution evidence. The
+macOS job can run when the verify job has produced a template-identity output,
+even if an Android manifest gate failed, provided the workflow was not
+cancelled. This preserves native-test/build diagnostics without masking failure:
+the verify job remains failed and the overall workflow remains failed. No
+`continue-on-error` or manifest-gate bypass is introduced.
 
 The APK manifest gate currently expects minimum SDK 24, `allowBackup=false`,
 debug's Flutter-generated `INTERNET` platform permission only, no release
@@ -38,9 +51,30 @@ Each Android lane writes these build outputs before verification:
 ```text
 build/app/outputs/flutter-apk/app-debug.apk
 build/app/outputs/flutter-apk/app-release.apk
+build/app/outputs/flutter-apk/manifest-diagnostics/app-debug-manifest.xml
+build/app/outputs/flutter-apk/manifest-diagnostics/app-release-manifest.xml
+build/ci-android-diagnostics/debugRuntimeClasspath.txt
+build/ci-android-diagnostics/releaseRuntimeClasspath.txt
 ```
 
-The workflow publishes those APKs as short-retention CI evidence. It does not
-upload full iOS build trees or require signing credentials. Native compilation
-success means compile evidence only; it does not claim device execution,
-release signing, store readiness, or OS-delivered deep-link behavior.
+For each Android source and renamed-copy lane, Flutter builds the debug APK
+first, allowing Flutter to prepare clean-checkout Android prerequisites before
+direct Gradle invocations. The lane then runs the preferences JUnit task and
+captures both runtime dependency reports before attempting the release APK.
+The release build still runs after a unit-test or graph-capture failure when
+the debug build succeeded; those earlier failures remain CI failures. Both APK
+variants are built before either manifest gate runs. The workflow prints each
+available APK's complete decoded binary manifest before validation. Gradle is
+invoked with `--project-dir android` so its Android project directory is
+correct while diagnostics are written under the repository's `build/` path.
+It uploads available APKs, manifest dumps, and graph reports with an
+`always()` artifact step, so the first fail-closed verifier error does not hide
+the remaining manifest surfaces. Upload warns when earlier failures produced
+no files; build, manifest-extraction, and validation failures remain failures.
+Artifacts are short-retention CI evidence. The workflow does not upload full
+iOS build trees or require signing credentials. Native compilation success
+means compile evidence only; it does not claim device execution, release
+signing, store readiness, or OS-delivered deep-link behavior.
+The actual native-plugin inventory and any broader capability policy remain
+unresolved; this baseline verifier does not approve new native components,
+permissions, or capabilities.

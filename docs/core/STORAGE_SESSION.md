@@ -2,9 +2,11 @@
 
 ## Mobile stores
 
-`SharedPreferencesPreferenceStore` creates `SharedPreferencesAsync` lazily. It
-accepts only bounded non-sensitive keys and UTF-8 string values (4 KiB maximum).
-Normalized key checks reject token, access, refresh, password, secret, cookie,
+`SharedPreferencesPreferenceStore` wraps an injected or inert
+`StarterkitPreferences` instance on the fixed `starterkit/preferences` channel.
+Construction does not read preferences or invoke the platform. It accepts only
+bounded non-sensitive keys and UTF-8 string values (4 KiB maximum). Normalized
+key checks reject token, access, refresh, password, secret, cookie,
 authorization, API-key, and credential names. Preferences are never a
 credential fallback.
 
@@ -15,6 +17,9 @@ default Android options are the package's standard RSA-OAEP/AES-GCM options;
 iOS uses `first_unlock_this_device` Keychain accessibility. Constructors perform
 no plugin calls or credential reads. Platform and plugin errors become safe
 `AppFailure` values without forwarding native messages.
+The preferences-channel wrapper and adapter have focused test-seam coverage;
+actual device/platform behavior remains NOT RUN. Neither adapter behavior nor
+preference persistence changes the separate logout-marker durability claims.
 
 ## File logout intent
 

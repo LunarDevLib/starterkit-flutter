@@ -1,6 +1,4 @@
-// The async platform interface is used here only as the package's official
-// in-memory test seam; the application depends directly on shared_preferences.
-// ignore_for_file: depend_on_referenced_packages
+// Tests inject the package's non-final wrapper; no platform global is mutated.
 
 import 'dart:convert';
 
@@ -10,48 +8,41 @@ import 'package:flutter_starterkit/core/failure/app_failure.dart';
 import 'package:flutter_starterkit/core/storage/platform_stores.dart';
 import 'package:flutter_starterkit/core/storage/stores.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:shared_preferences_platform_interface/in_memory_shared_preferences_async.dart';
-import 'package:shared_preferences_platform_interface/shared_preferences_async_platform_interface.dart';
+import 'package:starterkit_preferences/starterkit_preferences.dart';
 
 void main() {
   group('SharedPreferencesPreferenceStore', () {
-    late SharedPreferencesAsyncPlatform? oldPlatform;
-
-    setUp(() {
-      oldPlatform = SharedPreferencesAsyncPlatform.instance;
-      SharedPreferencesAsyncPlatform.instance =
-          InMemorySharedPreferencesAsync.empty();
-    });
-
-    tearDown(() {
-      SharedPreferencesAsyncPlatform.instance = oldPlatform;
-    });
-
     test(
-      'is lazy, stores strings, reads missing as null, and removes',
+      'constructor is inert and the injected wrapper stores strings',
       () async {
-        var factoryCalls = 0;
+        final preferences = _MemoryStarterkitPreferences();
         final store = SharedPreferencesPreferenceStore(
-          createPreferences: () {
-            factoryCalls++;
-            return SharedPreferencesAsync();
-          },
+          preferences: preferences,
         );
-        expect(factoryCalls, 0);
+        expect(preferences.calls, isEmpty);
         expect(await store.read('settings.theme'), isNull);
-        expect(factoryCalls, 1);
+        expect(preferences.calls, ['read:settings.theme']);
         await store.write('settings.theme', 'dark');
         expect(await store.read('settings.theme'), 'dark');
         await store.remove('settings.theme');
         expect(await store.read('settings.theme'), isNull);
+        expect(preferences.calls, [
+          'read:settings.theme',
+          'write:settings.theme',
+          'read:settings.theme',
+          'remove:settings.theme',
+          'read:settings.theme',
+        ]);
       },
     );
 
     test(
-      'rejects sensitive normalized key variants and oversized values',
+      'rejects sensitive keys and invalid values before platform calls',
       () async {
-        final store = SharedPreferencesPreferenceStore();
+        final preferences = _MemoryStarterkitPreferences();
+        final store = SharedPreferencesPreferenceStore(
+          preferences: preferences,
+        );
         for (final key in [
           'access-token',
           'refresh_token_cache',
@@ -76,52 +67,92 @@ void main() {
         await store.write('safe.preference', 'é' * 2048);
         await expectLater(
           store.write('safe.preference', 'é' * 2049),
-          throwsA(isA<AppFailure>()),
-        );
-      },
-    );
-
-    test(
-      'maps platform and missing-plugin failures without raw details',
-      () async {
-        SharedPreferencesAsyncPlatform.instance = _FailingPreferences(
-          PlatformException(
-            code: 'permission_denied',
-            message: 'secret detail',
-          ),
-        );
-        await expectLater(
-          SharedPreferencesPreferenceStore().read('safe.key'),
-          throwsA(
-            isA<AppFailure>()
-                .having(
-                  (failure) => failure.kind,
-                  'kind',
-                  FailureKind.forbidden,
-                )
-                .having(
-                  (failure) => failure.toString(),
-                  'safe error text',
-                  isNot(contains('secret detail')),
-                ),
-          ),
-        );
-        final missing = SharedPreferencesPreferenceStore(
-          createPreferences: () =>
-              throw MissingPluginException('private detail'),
-        );
-        await expectLater(
-          missing.read('safe.key'),
           throwsA(
             isA<AppFailure>().having(
-              (failure) => failure.kind,
-              'kind',
-              FailureKind.unavailable,
+              (failure) => failure.code,
+              'code',
+              'storage.invalid_value',
             ),
           ),
         );
+        preferences.values['oversized.read'] = 'é' * 2049;
+        await expectLater(
+          store.read('oversized.read'),
+          throwsA(isA<AppFailure>()),
+        );
+        expect(preferences.calls, [
+          'write:safe.preference',
+          'read:oversized.read',
+        ]);
       },
     );
+
+    test('maps fixed platform codes without exposing native details', () async {
+      final preferences = _MemoryStarterkitPreferences();
+      final store = SharedPreferencesPreferenceStore(preferences: preferences);
+      for (final entry in {
+        'preference.invalid_key': (
+          'storage.invalid_key',
+          FailureKind.validation,
+        ),
+        'preference.invalid_value': (
+          'storage.invalid_value',
+          FailureKind.validation,
+        ),
+        'preference.invalid_arguments': (
+          'storage.invalid_arguments',
+          FailureKind.validation,
+        ),
+        'preference.missing_plugin': (
+          'storage.preference_unavailable',
+          FailureKind.unavailable,
+        ),
+        'preference.detached': (
+          'storage.preference_unavailable',
+          FailureKind.unavailable,
+        ),
+        'preference.unavailable': (
+          'storage.preference_unavailable',
+          FailureKind.unavailable,
+        ),
+        'preference.operation_failed': (
+          'storage.preference_unavailable',
+          FailureKind.unavailable,
+        ),
+      }.entries) {
+        preferences.readError = PlatformException(
+          code: entry.key,
+          message: 'private detail',
+        );
+        await expectLater(
+          store.read('safe.key'),
+          throwsA(
+            isA<AppFailure>()
+                .having((failure) => failure.code, 'code', entry.value.$1)
+                .having((failure) => failure.kind, 'kind', entry.value.$2)
+                .having(
+                  (failure) => failure.toString(),
+                  'safe error text',
+                  isNot(contains('private detail')),
+                ),
+          ),
+        );
+      }
+      preferences.readError = MissingPluginException('private detail');
+      await expectLater(
+        store.read('safe.key'),
+        throwsA(
+          isA<AppFailure>().having(
+            (failure) => failure.kind,
+            'kind',
+            FailureKind.unavailable,
+          ),
+        ),
+      );
+      preferences.readError = null;
+      preferences.readValue = Object();
+      await expectLater(store.read('safe.key'), throwsA(isA<AppFailure>()));
+    });
   });
 
   group('FlutterSecureByteStore', () {
@@ -197,14 +228,37 @@ void main() {
   });
 }
 
-final class _FailingPreferences extends InMemorySharedPreferencesAsync {
-  _FailingPreferences(this.error) : super.empty();
+final class _MemoryStarterkitPreferences extends StarterkitPreferences {
+  _MemoryStarterkitPreferences();
 
-  final Object error;
+  final Map<String, Object?> values = {};
+  final List<String> calls = [];
+  Object? readError;
+  Object? writeError;
+  Object? removeError;
+  Object? readValue;
 
   @override
-  Future<String?> getString(String key, SharedPreferencesOptions options) =>
-      Future<String?>.error(error);
+  Future<String?> read(String key) async {
+    calls.add('read:$key');
+    if (readError case final error?) throw error;
+    if (readValue != null) return readValue as String?;
+    return values[key] as String?;
+  }
+
+  @override
+  Future<void> write(String key, String value) async {
+    calls.add('write:$key');
+    if (writeError case final error?) throw error;
+    values[key] = value;
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    calls.add('remove:$key');
+    if (removeError case final error?) throw error;
+    values.remove(key);
+  }
 }
 
 final class _FailingFlutterSecureStorage extends FlutterSecureStorage {

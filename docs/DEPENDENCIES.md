@@ -13,23 +13,28 @@ not read credentials, write preferences, or start external services.
 | `intl` | Existing localization baseline; preserve its existing version constraint. |
 | Flutter SDK packages | `flutter`, `flutter_localizations`, and `flutter_test` remain SDK dependencies. |
 
-## Core: pinned, not activated
+## Core: pinned or local, not activated
 
-These direct dependencies are exact-version pins. Keep integrations dormant
-until a scoped feature explicitly uses them and adds relevant tests.
+These direct dependencies are exact-version pins or project-owned packages.
+Keep integrations dormant until a scoped feature explicitly uses them and adds
+relevant tests.
 
 | Package | Version | License | Rationale and limits |
 | --- | --- | --- | --- |
 | `http` | 1.6.0 | BSD-3-Clause | Small Dart HTTP client for future explicit requests. No endpoint, client, request, or internet permission is configured by adding the package. |
-| `shared_preferences` | 2.5.5 | BSD-3-Clause | Simple non-sensitive key/value persistence, not a database or credential store. No app data is read or written by default. |
 | `flutter_secure_storage` | 11.2.0 | BSD-3-Clause | Secure-storage adapter for future credential features. No credential reads/writes, migration, or cipher operation is invoked by the template. Its inspected Android defaults are RSA-OAEP key wrapping and AES-GCM storage; keep defaults unless separately reviewed. |
+| `starterkit_preferences` | 1.0.0 (local) | Project-owned | Narrow non-sensitive preference adapter used by Starter Core. Fixed method-channel registration does not open storage; only validated `read`, `write`, or `remove` calls access preferences. |
 | `starterkit_connectivity` | 1.0.0 (local) | Project-owned | Native interface-status stream; registration installs channels only, and observation starts on explicit subscription. Not an internet-reachability check. |
 
 ### Inert registration audit
 
-Flutter plugin registration for these three dependencies provides platform
-channels/handlers; it does not itself perform an HTTP request, read or write a
-credential/preference, migrate storage, or activate hardware/telemetry.
+Registration behavior is dependency-specific and must not be generalized from
+one plugin to another. The local preference plugin installs its fixed channel
+without opening storage; the local connectivity plugin installs channels
+without starting observation. The secure-storage package's registration
+creates channels and an Android worker thread; its inspected source performs
+storage operations only after a method call, but an idle worker is not a claim
+of zero native activity.
 
 - `flutter_secure_storage` Android:
   `flutter_secure_storage-11.2.0/android/src/main/java/com/it_nomads/fluttersecurestorage/FlutterSecureStoragePlugin.java`.
@@ -41,9 +46,13 @@ credential/preference, migrate storage, or activate hardware/telemetry.
   `flutter_secure_storage_darwin-0.4.3/darwin/flutter_secure_storage_darwin/Sources/flutter_secure_storage_darwin/FlutterSecureStorageDarwinPlugin.swift`.
   Registration creates method/event channels and a plugin instance; keychain
   reads/writes happen only in method handlers.
-- `shared_preferences` uses its federated `shared_preferences_android` and
-  `shared_preferences_foundation` platform implementations. Registration sets
-  up the method channel; storage access requires an explicit API method call.
+- `starterkit_preferences` is owned source at
+  `packages/starterkit_preferences`. Android registration installs the method
+  channel; a validated operation lazily opens its fixed store on a serial
+  worker. iOS registration installs the method channel; operations alone
+  address the fixed defaults key prefix. See
+  [the native preferences contract](core/PREFERENCES_NATIVE.md). This is a
+  Starter Core dependency, not an optional capability.
 - `http` is a Dart package and does not create/start a client or issue traffic
   merely by being a dependency.
 

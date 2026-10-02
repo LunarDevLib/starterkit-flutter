@@ -16,8 +16,9 @@ dependencies:
   go_router: ^13.2.0
   http: 1.6.0
   intl: ^0.20.2
-  shared_preferences: 2.5.5
   flutter_secure_storage: 11.2.0
+  starterkit_preferences:
+    path: packages/starterkit_preferences
   starterkit_connectivity:
     path: packages/starterkit_connectivity
 
