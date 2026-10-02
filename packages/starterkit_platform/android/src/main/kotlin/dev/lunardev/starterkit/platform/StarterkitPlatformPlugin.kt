@@ -1,9 +1,11 @@
 package dev.lunardev.starterkit.platform
 
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
@@ -74,11 +76,12 @@ class StarterkitPlatformPlugin :
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "cameraAvailability" ->
-                result.success(cameraIntent().resolveActivity(context.packageManager) != null)
+                result.success(
+                    context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY),
+                )
             "cameraPermissionStatus" -> result.success("notRequired")
             "requestCameraPermission" -> result.success("notRequired")
-            "galleryAvailability" ->
-                result.success(galleryIntent().resolveActivity(context.packageManager) != null)
+            "galleryAvailability" -> result.success(true)
             "captureCamera" -> captureCamera(call.arguments as? Map<*, *>, result)
             "pickGalleryImage" -> pickGallery(call.arguments as? Map<*, *>, result)
             "cleanupMedia" -> {
@@ -109,11 +112,11 @@ class StarterkitPlatformPlugin :
             result.success(mediaOutcome("unavailable", "camera.fileprovider_not_configured"))
             return
         }
-        val intent = cameraIntent()
-        if (intent.resolveActivity(context.packageManager) == null) {
+        if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
             result.success(mediaOutcome("unavailable", "camera.unavailable"))
             return
         }
+        val intent = cameraIntent()
 
         val file = newTempFile("camera", ".jpg")
         val uri =
@@ -127,16 +130,6 @@ class StarterkitPlatformPlugin :
         intent.putExtra(MediaStore.EXTRA_OUTPUT, uri)
         intent.clipData = ClipData.newRawUri("starterkit-camera-output", uri)
         intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        context.packageManager.queryIntentActivities(intent, 0).forEach { info ->
-            runCatching {
-                context.grantUriPermission(
-                    info.activityInfo.packageName,
-                    uri,
-                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION,
-                )
-            }
-        }
-
         pending =
             PendingOperation(
                 requestCode = CAMERA_REQUEST,
@@ -147,6 +140,9 @@ class StarterkitPlatformPlugin :
             )
         try {
             activity.startActivityForResult(intent, CAMERA_REQUEST)
+        } catch (_: ActivityNotFoundException) {
+            revoke(uri)
+            settlePending(mediaOutcome("unavailable", "camera.unavailable"), deleteFile = true)
         } catch (_: Throwable) {
             revoke(uri)
             settlePending(mediaOutcome("failure", "camera.launch_failed"), deleteFile = true)
@@ -169,10 +165,6 @@ class StarterkitPlatformPlugin :
             return
         }
         val intent = galleryIntent()
-        if (intent.resolveActivity(context.packageManager) == null) {
-            result.success(mediaOutcome("unavailable", "gallery.unavailable"))
-            return
-        }
         pending =
             PendingOperation(
                 requestCode = GALLERY_REQUEST,
@@ -181,6 +173,8 @@ class StarterkitPlatformPlugin :
             )
         try {
             activity.startActivityForResult(intent, GALLERY_REQUEST)
+        } catch (_: ActivityNotFoundException) {
+            settlePending(mediaOutcome("unavailable", "gallery.unavailable"), deleteFile = false)
         } catch (_: Throwable) {
             settlePending(mediaOutcome("failure", "gallery.launch_failed"), deleteFile = false)
         }

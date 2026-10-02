@@ -3,7 +3,6 @@ import Flutter
 import ImageIO
 import PhotosUI
 import UIKit
-import UniformTypeIdentifiers
 
 public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
   UIImagePickerControllerDelegate, UINavigationControllerDelegate
@@ -115,7 +114,7 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
 
     let picker = UIImagePickerController()
     picker.sourceType = .camera
-    picker.mediaTypes = [UTType.image.identifier]
+    picker.mediaTypes = ["public.image"]
     picker.cameraCaptureMode = .photo
     picker.delegate = self
     pending = PendingOperation(kind: .camera, result: result, limits: limits)
@@ -225,11 +224,11 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
       return
     }
     let provider = selected.itemProvider
-    guard provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
+    guard provider.hasItemConformingToTypeIdentifier("public.image") else {
       operation.result(mediaOutcome("invalid", "gallery.invalid_type"))
       return
     }
-    provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) {
+    provider.loadFileRepresentation(forTypeIdentifier: "public.image") {
       [weak self] source, error in
       guard let self else { return }
       guard error == nil, let source else {
@@ -243,6 +242,7 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     }
   }
 
+  @available(iOS 14.0, *)
   private func copyAndValidateGallery(_ source: URL, limits: MediaLimits) -> [String: Any] {
     guard source.isFileURL else {
       return mediaOutcome("invalid", "gallery.invalid_file")
@@ -264,12 +264,10 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
       return mediaOutcome("invalid", "media.invalid_dimensions")
     }
 
-    let typeIdentifier = CGImageSourceGetType(imageSource) as String?
-    let mime =
-      typeIdentifier.flatMap { UTType($0)?.preferredMIMEType }
-      ?? UTType(filenameExtension: source.pathExtension)?.preferredMIMEType
-      ?? "image/octet-stream"
-    guard mime.hasPrefix("image/"), mime.utf8.count <= 128 else {
+    guard let typeIdentifier = CGImageSourceGetType(imageSource) as String?,
+      let mime = Self.mimeType(for: typeIdentifier),
+      mime.utf8.count <= 128
+    else {
       return mediaOutcome("invalid", "media.invalid_type")
     }
 
@@ -291,6 +289,18 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     } catch {
       try? FileManager.default.removeItem(at: destination)
       return mediaOutcome("failure", "gallery.copy_failed")
+    }
+  }
+
+  private static func mimeType(for typeIdentifier: String) -> String? {
+    switch typeIdentifier {
+    case "public.jpeg": return "image/jpeg"
+    case "public.png": return "image/png"
+    case "public.heic", "public.heif": return "image/heic"
+    case "com.compuserve.gif": return "image/gif"
+    case "public.tiff": return "image/tiff"
+    case "com.microsoft.bmp": return "image/bmp"
+    default: return nil
     }
   }
 

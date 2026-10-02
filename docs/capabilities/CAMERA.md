@@ -65,9 +65,19 @@ Activation must add a narrow provider owned by the product, for example:
 </provider>
 ```
 
+The provider path should be limited to the capability cache directory, for example:
+
+```xml
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="starterkit_media" path="starterkit_media/" />
+</paths>
+```
+
 The Dart capability accepts only the matching
-`<applicationId>.fileprovider` authority. URI grants are scoped to the camera
-handler and revoked after the result.
+`<applicationId>.fileprovider` authority. URI grants are carried only on the
+explicit camera intent and revoked after the result. The implementation does not
+require a package-visibility `<queries>` declaration; missing camera handlers are
+reported from the launch attempt.
 
 ## iOS
 

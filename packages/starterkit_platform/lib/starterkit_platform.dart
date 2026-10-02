@@ -33,10 +33,15 @@ final class MediaLimits {
   final int maxBytes;
   final int maxPixels;
 
-  Map<String, Object> toMap() => {
-    'maxBytes': maxBytes,
-    'maxPixels': maxPixels,
-  };
+  Map<String, Object> toMap() {
+    if (maxBytes <= 0 ||
+        maxBytes > maximumBytes ||
+        maxPixels <= 0 ||
+        maxPixels > maximumPixels) {
+      throw ArgumentError('Media limits exceed the supported bounds.');
+    }
+    return {'maxBytes': maxBytes, 'maxPixels': maxPixels};
+  }
 }
 
 final class MediaImage {
