@@ -21,6 +21,8 @@ dependencies:
     path: packages/starterkit_preferences
   starterkit_connectivity:
     path: packages/starterkit_connectivity
+  starterkit_webview:
+    path: packages/starterkit_webview
 
 dev_dependencies:
   flutter_test:

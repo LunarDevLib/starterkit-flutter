@@ -600,6 +600,13 @@ packages:
       relative: true
     source: path
     version: "1.0.0"
+  starterkit_webview:
+    dependency: "direct main"
+    description:
+      path: "packages/starterkit_webview"
+      relative: true
+    source: path
+    version: "1.0.0"
   state_notifier:
     dependency: transitive
     description:

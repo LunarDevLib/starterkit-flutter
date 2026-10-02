@@ -58,12 +58,30 @@ of zero native activity.
 
 These are source inspections, not runtime/build evidence.
 
+## Optional capabilities
+
+### WebView
+
+`starterkit_webview` 1.0.0 is a project-owned local Flutter plugin. It is present
+as a dependency so source and renamed Android/iOS builds compile the native adapter,
+but the default app does not import or construct it. Plugin registration only
+registers a platform-view factory; it does not construct a WebView, load content,
+request permissions, or start network traffic.
+
+Android uses `androidx.webkit:webkit:1.17.1` in the capability plugin. The native
+bridge requires runtime support for both `WEB_MESSAGE_LISTENER` and
+`DOCUMENT_START_SCRIPT`; otherwise the WebView remains usable but the bridge is
+reported unavailable. iOS uses the system WebKit framework. No vendor SDK is used.
+
+Remote WebView content is not functional on the Android baseline until a consuming
+product deliberately adds `android.permission.INTERNET`. The capability itself
+declares no platform permission.
+
 ## Optional future integrations (not implemented)
 
-Dio, cloud SDKs, WebViews, Sentry, Firebase services, camera, and biometric
-packages are not included or configured. They
-require separate capability-specific approval, platform/permission review,
-and tests.
+Dio, cloud SDKs, Sentry, Firebase services, geolocation, image picker, camera, and
+biometric packages are not included or configured. They require separate
+capability-specific approval, platform/permission review, and tests.
 
 `connectivity_plus` was explicitly rejected for this Core set: in
 `connectivity_plus-7.3.2/ios/connectivity_plus/Sources/connectivity_plus/ConnectivityPlusPlugin.swift`,
