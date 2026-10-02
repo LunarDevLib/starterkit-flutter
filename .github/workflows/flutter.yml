@@ -35,6 +35,9 @@ jobs:
       - name: Resolve locked WebView capability package
         working-directory: packages/starterkit_webview
         run: flutter pub get --enforce-lockfile
+      - name: Resolve locked platform capability package
+        working-directory: packages/starterkit_platform
+        run: flutter pub get --enforce-lockfile
       - run: flutter gen-l10n
       - run: dart run tool/validate_template.dart
       - run: >-
@@ -42,7 +45,8 @@ jobs:
           lib test tool packages/starterkit_connectivity/lib
           packages/starterkit_connectivity/test packages/starterkit_preferences/lib
           packages/starterkit_preferences/test packages/starterkit_webview/lib
-          packages/starterkit_webview/test
+          packages/starterkit_webview/test packages/starterkit_platform/lib
+          packages/starterkit_platform/test
       - run: flutter analyze
       - name: Analyze connectivity package
         working-directory: packages/starterkit_connectivity
@@ -61,6 +65,12 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test WebView capability package
         working-directory: packages/starterkit_webview
+        run: flutter test --no-pub
+      - name: Analyze platform capability package
+        working-directory: packages/starterkit_platform
+        run: flutter analyze --no-pub
+      - name: Test platform capability package
+        working-directory: packages/starterkit_platform
         run: flutter test --no-pub
       - name: Test Android manifest verifier fixtures
         run: python3 -m unittest discover -s test/tool -p 'test_*.py'
@@ -82,6 +92,9 @@ jobs:
       - name: Run WebView Android unit tests
         if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
         run: ./android/gradlew --project-dir android :starterkit_webview:testDebugUnitTest
+      - name: Run platform Android unit tests
+        if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
+        run: ./android/gradlew --project-dir android :starterkit_platform:testDebugUnitTest
       - name: Capture Android runtime dependency graphs
         id: android-dependency-graphs
         if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
@@ -225,7 +238,7 @@ jobs:
           flutter pub get --enforce-lockfile
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
           flutter analyze
           # Bootstrap tests assume the unrenamed template fixtures; exclude them from the renamed copy.
           flutter test --exclude-tags template-only
@@ -233,6 +246,7 @@ jobs:
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
       - name: Build renamed Android debug APK
         id: renamed-android-debug-apk
         if: ${{ success() }}
@@ -246,6 +260,10 @@ jobs:
         if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
         working-directory: ${{ runner.temp }}/renamed-copy
         run: ./android/gradlew --project-dir android :starterkit_webview:testDebugUnitTest
+      - name: Run renamed platform Android unit tests
+        if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: ./android/gradlew --project-dir android :starterkit_platform:testDebugUnitTest
       - name: Capture renamed Android runtime dependency graphs
         id: android-dependency-graphs
         if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
@@ -360,9 +378,10 @@ jobs:
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
           flutter analyze
           if [ "$IS_TEMPLATE" = "true" ]; then
             flutter test
@@ -372,6 +391,7 @@ jobs:
           python3 -m unittest discover -s test/tool -p 'test_*.py'
           swift test --package-path packages/starterkit_preferences/ios
           swift test --package-path packages/starterkit_webview/ios
+          swift test --package-path packages/starterkit_platform/ios
           flutter build ios --simulator --no-codesign
           flutter build ios --release --no-codesign
       - name: Bootstrap fresh copy and iOS simulator build
@@ -386,13 +406,15 @@ jobs:
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
           flutter analyze
           flutter test --exclude-tags template-only
           python3 -m unittest discover -s test/tool -p 'test_*.py'
           swift test --package-path packages/starterkit_preferences/ios
           swift test --package-path packages/starterkit_webview/ios
+          swift test --package-path packages/starterkit_platform/ios
           flutter build ios --simulator --no-codesign
           flutter build ios --release --no-codesign

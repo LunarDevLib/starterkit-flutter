@@ -7,8 +7,8 @@ integration verification.
 
 - [WebView](WEBVIEW.md) — implemented
 - Push — planned
-- Camera — planned
-- Gallery — planned
+- [Camera](CAMERA.md) — implemented
+- [Gallery](GALLERY.md) — implemented
 - Location — planned
 - QR / Barcode — planned
 - Biometric — planned
