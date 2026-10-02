@@ -23,6 +23,7 @@ void main() {
         'https://example.com?',
         'https://example.com#fragment',
         'https://example.com:',
+        'https://example.com:not-a-port',
         'https://example%2ecom',
       ]) {
         expect(TrustedOrigin.tryParse(value), isNull, reason: value);
@@ -82,6 +83,14 @@ void main() {
           userGesture: true,
         ),
         StarterWebViewNavigationDecision.externalApp,
+      );
+      expect(
+        policy.decide(
+          'https://user@outside.example',
+          mainFrame: true,
+          userGesture: true,
+        ),
+        StarterWebViewNavigationDecision.blocked,
       );
     });
 

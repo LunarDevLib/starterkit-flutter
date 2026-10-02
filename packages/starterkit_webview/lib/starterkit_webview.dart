@@ -42,7 +42,12 @@ class TrustedOrigin {
         uri.host.isEmpty) {
       return null;
     }
-    final port = uri.port;
+    final int port;
+    try {
+      port = uri.port;
+    } on FormatException {
+      return null;
+    }
     if (port < 1 || port > 65535) return null;
     return TrustedOrigin._(uri.host.toLowerCase(), port);
   }
@@ -124,7 +129,12 @@ class StarterWebViewNavigationPolicy {
       if (trustedOrigin.matches(uri)) {
         return StarterWebViewNavigationDecision.internal;
       }
-      return mainFrame && userGesture && uri.host.isNotEmpty
+      return mainFrame &&
+              userGesture &&
+              uri.host.isNotEmpty &&
+              uri.userInfo.isEmpty &&
+              !uri.authority.contains('%') &&
+              !uri.authority.endsWith(':')
           ? StarterWebViewNavigationDecision.externalBrowser
           : StarterWebViewNavigationDecision.blocked;
     }
