@@ -26,10 +26,24 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get --enforce-lockfile
+      - name: Resolve locked connectivity package
+        working-directory: packages/starterkit_connectivity
+        run: flutter pub get --enforce-lockfile
       - run: flutter gen-l10n
       - run: dart run tool/validate_template.dart
-      - run: dart format --output=none --set-exit-if-changed lib test tool
+      - run: >-
+          dart format --output=none --set-exit-if-changed
+          lib test tool packages/starterkit_connectivity/lib
+          packages/starterkit_connectivity/test
       - run: flutter analyze
+      - name: Analyze connectivity package
+        working-directory: packages/starterkit_connectivity
+        run: flutter analyze --no-pub
+      - name: Test connectivity package
+        working-directory: packages/starterkit_connectivity
+        run: flutter test --no-pub
+      - name: Test Android manifest verifier fixtures
+        run: python3 -m unittest discover -s test/tool -p 'test_*.py'
       - name: Test template or consuming product
         env:
           IS_TEMPLATE: ${{ steps.template-identity.outputs.is_template }}
@@ -40,6 +54,24 @@ jobs:
             flutter test --exclude-tags template-only
           fi
       - run: flutter build apk --debug
+      - name: Verify debug APK Android baseline
+        run: >-
+          python3 tool/verify_android_baseline.py
+          --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
+      - run: flutter build apk --release
+      - name: Verify unsigned release APK Android baseline
+        run: >-
+          python3 tool/verify_android_baseline.py
+          --apk build/app/outputs/flutter-apk/app-release.apk --variant release
+      - name: Upload Android APK evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks-source
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
 
   renamed-copy:
     needs: verify
@@ -95,11 +127,29 @@ jobs:
           flutter pub get --enforce-lockfile
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test
           flutter analyze
           # Bootstrap tests assume the unrenamed template fixtures; exclude them from the renamed copy.
           flutter test --exclude-tags template-only
+          python3 -m unittest discover -s test/tool -p 'test_*.py'
+          cd packages/starterkit_connectivity
+          flutter pub get --enforce-lockfile
+          flutter analyze --no-pub
+          flutter test --no-pub
+          cd ../..
           flutter build apk --debug
+          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
+          flutter build apk --release
+          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-release.apk --variant release
+      - name: Upload renamed Android APK evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-apks-renamed
+          path: |
+            ${{ runner.temp }}/renamed-copy/build/app/outputs/flutter-apk/app-debug.apk
+            ${{ runner.temp }}/renamed-copy/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
 
   ios-simulator:
     runs-on: macos-latest
@@ -111,10 +161,25 @@ jobs:
           flutter-version: '3.47.4'
           channel: stable
           cache: true
-      - name: Baseline iOS simulator build
+      - name: Validate source and compile iOS targets
+        env:
+          IS_TEMPLATE: ${{ needs.verify.outputs.is_template }}
         run: |
+          set -euo pipefail
           flutter pub get --enforce-lockfile
+          (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          flutter gen-l10n
+          dart run tool/validate_template.dart
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test
+          flutter analyze
+          if [ "$IS_TEMPLATE" = "true" ]; then
+            flutter test
+          else
+            flutter test --exclude-tags template-only
+          fi
+          python3 -m unittest discover -s test/tool -p 'test_*.py'
           flutter build ios --simulator --no-codesign
+          flutter build ios --release --no-codesign
       - name: Bootstrap fresh copy and iOS simulator build
         if: needs.verify.outputs.is_template == 'true'
         run: |
@@ -124,4 +189,12 @@ jobs:
           cd "${{ runner.temp }}/ios-renamed-copy"
           dart tool/bootstrap_project.dart --package-name sample_portable --app-name 'Sample Portable' --bundle-id dev.example.sampleportable --scheme sample-portable
           flutter pub get --enforce-lockfile
+          (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          flutter gen-l10n
+          dart run tool/validate_template.dart --release-readiness
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test
+          flutter analyze
+          flutter test --exclude-tags template-only
+          python3 -m unittest discover -s test/tool -p 'test_*.py'
           flutter build ios --simulator --no-codesign
+          flutter build ios --release --no-codesign

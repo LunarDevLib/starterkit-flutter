@@ -78,7 +78,7 @@ void main(List<String> args) {
   }
   final pubspec = File('${root.path}/pubspec.yaml').readAsStringSync();
   final forbidden = RegExp(
-    r'^\s{2}(firebase_|sentry|webview|geolocator|image_picker|camera|permission_handler|firebase_messaging|flutter_secure_storage)',
+    r'^\s{2}(firebase_|sentry|webview|geolocator|image_picker|camera|permission_handler|firebase_messaging)',
     multiLine: true,
   );
   if (forbidden.hasMatch(pubspec)) {

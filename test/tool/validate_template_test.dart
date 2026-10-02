@@ -12,7 +12,7 @@ void main() {
 
   group('validate_template forbidden-package regex regression', () {
     final forbidden = RegExp(
-      r'^\s{2}(firebase_|sentry|webview|geolocator|image_picker|camera|permission_handler|firebase_messaging|flutter_secure_storage)',
+      r'^\s{2}(firebase_|sentry|webview|geolocator|image_picker|camera|permission_handler|firebase_messaging)',
       multiLine: true,
     );
 
@@ -20,7 +20,11 @@ void main() {
       expect(forbidden.hasMatch('  firebase_core: ^1.0.0'), isTrue);
       expect(forbidden.hasMatch('  sentry_flutter: ^5.0.0'), isTrue);
       expect(forbidden.hasMatch('  permission_handler: ^10.0.0'), isTrue);
-      expect(forbidden.hasMatch('  flutter_secure_storage: ^10.0.0'), isTrue);
+      expect(forbidden.hasMatch('  firebase_messaging: ^1.0.0'), isTrue);
+      expect(forbidden.hasMatch('  camera: ^1.0.0'), isTrue);
+      expect(forbidden.hasMatch('  webview_flutter: ^1.0.0'), isTrue);
+      expect(forbidden.hasMatch('  geolocator: ^1.0.0'), isTrue);
+      expect(forbidden.hasMatch('  flutter_secure_storage: 11.2.0'), isFalse);
     });
 
     test('does not match comments or deeper indents', () {
