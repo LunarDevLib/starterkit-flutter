@@ -1,0 +1,127 @@
+name: Flutter
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      is_template: ${{ steps.template-identity.outputs.is_template }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect template identity
+        id: template-identity
+        run: |
+          package_name="$(awk '$1 == "name:" { print $2; exit }' pubspec.yaml)"
+          if [ "$package_name" = "flutter_starterkit" ]; then
+            echo "is_template=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_template=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+      - run: flutter gen-l10n
+      - run: dart run tool/validate_template.dart
+      - run: dart format --output=none --set-exit-if-changed lib test tool
+      - run: flutter analyze
+      - name: Test template or consuming product
+        env:
+          IS_TEMPLATE: ${{ steps.template-identity.outputs.is_template }}
+        run: |
+          if [ "$IS_TEMPLATE" = "true" ]; then
+            flutter test
+          else
+            flutter test --exclude-tags template-only
+          fi
+      - run: flutter build apk --debug
+
+  renamed-copy:
+    needs: verify
+    if: needs.verify.outputs.is_template == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Negative invalid-argument no-mutation check
+        run: |
+          set -euo pipefail
+          workdir="${{ runner.temp }}/negative-check"
+          rm -rf "$workdir"
+          git clone . "$workdir"
+          cd "$workdir"
+          if dart tool/bootstrap_project.dart --package-name '' --app-name 'Invalid' --bundle-id invalid --scheme invalid --dry-run; then
+            echo "ERROR: bootstrap accepted invalid arguments; expected failure"
+            exit 1
+          fi
+          git diff --exit-code
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "ERROR: dry-run left unexpected tracked or untracked changes:"
+            git status --porcelain
+            exit 1
+          fi
+      - name: Clone clean tracked copy
+        run: |
+          set -euo pipefail
+          rm -rf "${{ runner.temp }}/renamed-copy"
+          git clone . "${{ runner.temp }}/renamed-copy"
+      - name: Dry-run must not modify copy
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: |
+          set -euo pipefail
+          dart tool/bootstrap_project.dart --package-name sample_portable --app-name 'Sample Portable' --bundle-id dev.example.sampleportable --scheme sample-portable --dry-run
+          git diff --exit-code
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "ERROR: dry-run left unexpected tracked or untracked changes:"
+            git status --porcelain
+            exit 1
+          fi
+      - name: Bootstrap renamed copy
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: |
+          dart tool/bootstrap_project.dart --package-name sample_portable --app-name 'Sample Portable' --bundle-id dev.example.sampleportable --scheme sample-portable
+      - name: Validate renamed copy
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter gen-l10n
+          dart run tool/validate_template.dart --release-readiness
+          dart format --output=none --set-exit-if-changed lib test tool
+          flutter analyze
+          # Bootstrap tests assume the unrenamed template fixtures; exclude them from the renamed copy.
+          flutter test --exclude-tags template-only
+          flutter build apk --debug
+
+  ios-simulator:
+    runs-on: macos-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Baseline iOS simulator build
+        run: |
+          flutter pub get --enforce-lockfile
+          flutter build ios --simulator --no-codesign
+      - name: Bootstrap fresh copy and iOS simulator build
+        if: needs.verify.outputs.is_template == 'true'
+        run: |
+          set -euo pipefail
+          rm -rf "${{ runner.temp }}/ios-renamed-copy"
+          git clone . "${{ runner.temp }}/ios-renamed-copy"
+          cd "${{ runner.temp }}/ios-renamed-copy"
+          dart tool/bootstrap_project.dart --package-name sample_portable --app-name 'Sample Portable' --bundle-id dev.example.sampleportable --scheme sample-portable
+          flutter pub get --enforce-lockfile
+          flutter build ios --simulator --no-codesign

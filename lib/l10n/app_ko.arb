@@ -1,0 +1,21 @@
+{
+  "@@locale": "ko",
+  "appTitle": "Flutter Starter Kit",
+  "loading": "불러오는 중",
+  "retry": "다시 시도",
+  "emptyTitle": "아직 아무것도 없습니다",
+  "emptyMessage": "준비가 되면 이곳에 표시됩니다.",
+  "errorTitle": "불러오지 못했습니다",
+  "errorMessage": "연결을 확인한 뒤 다시 시도해 주세요.",
+  "sampleListTitle": "샘플 항목",
+  "sampleListSubtitle": "샘플 항목 및 상세 정보를 확인해 보세요.",
+  "sampleErrorMessage": "샘플을 불러오지 못했습니다. 다시 시도해 주세요.",
+  "sampleDetailTitle": "샘플 상세",
+  "sampleDetailNotFoundTitle": "샘플을 찾을 수 없습니다",
+  "sampleDetailNotFoundMessage": "이 링크에 해당하는 샘플 항목이 없습니다.",
+  "sampleItemA11yLabel": "{title} 상세 정보 열기",
+  "sampleBackLabel": "뒤로 가기",
+  "sampleUnknownRouteTitle": "페이지를 찾을 수 없습니다",
+  "sampleUnknownRouteMessage": "요청하신 페이지가 존재하지 않습니다.",
+  "sampleUnknownRouteBack": "샘플 목록으로 돌아가기"
+}

@@ -1,0 +1,29 @@
+{
+  "@@locale": "en",
+  "appTitle": "Flutter Starter Kit",
+  "loading": "Loading",
+  "retry": "Try again",
+  "emptyTitle": "Nothing here yet",
+  "emptyMessage": "When something is ready, it will appear here.",
+  "errorTitle": "We couldn't load this",
+  "errorMessage": "Check your connection and try again.",
+  "sampleListTitle": "Sample items",
+  "sampleListSubtitle": "Explore example items and their detail views.",
+  "sampleErrorMessage": "The sample could not be loaded. Try again.",
+  "sampleDetailTitle": "Sample detail",
+  "sampleDetailNotFoundTitle": "Sample not found",
+  "sampleDetailNotFoundMessage": "There is no sample item for this link.",
+  "sampleItemA11yLabel": "Open details for {title}",
+  "@sampleItemA11yLabel": {
+    "description": "Accessibility label for opening a sample item's details",
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "sampleBackLabel": "Back",
+  "sampleUnknownRouteTitle": "Page not found",
+  "sampleUnknownRouteMessage": "The page you are looking for does not exist.",
+  "sampleUnknownRouteBack": "Back to samples"
+}
