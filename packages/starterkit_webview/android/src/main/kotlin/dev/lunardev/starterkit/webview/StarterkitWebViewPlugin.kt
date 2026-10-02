@@ -315,7 +315,6 @@ private class StarterkitWebViewPlatformView(
         bridgeScript = null
         webView.stopLoading()
         webView.webChromeClient = null
-        webView.webViewClient = null
         webView.removeAllViews()
         webView.destroy()
     }

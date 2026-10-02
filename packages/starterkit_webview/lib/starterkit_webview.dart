@@ -64,10 +64,16 @@ class TrustedOrigin {
   }
 
   bool matches(Uri uri) {
+    final int uriPort;
+    try {
+      uriPort = uri.port;
+    } on FormatException {
+      return false;
+    }
     if (uri.scheme.toLowerCase() != 'https' ||
         uri.userInfo.isNotEmpty ||
         uri.host.toLowerCase() != host ||
-        uri.port != port) {
+        uriPort != port) {
       return false;
     }
     final authority = uri.authority;
@@ -149,10 +155,16 @@ class StarterWebViewNavigationPolicy {
 }
 
 bool _isAllowedLocalUri(Uri uri) {
+  final int port;
+  try {
+    port = uri.port;
+  } on FormatException {
+    return false;
+  }
   return uri.scheme.toLowerCase() == 'https' &&
       uri.userInfo.isEmpty &&
       uri.host.toLowerCase() == _localHost &&
-      uri.port == 443 &&
+      port == 443 &&
       uri.query.isEmpty &&
       uri.fragment.isEmpty &&
       uri.path.startsWith(_localPathPrefix) &&
