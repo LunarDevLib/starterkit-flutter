@@ -75,8 +75,13 @@ They do not enable runtime integrations.
 Firebase, Sentry, WebView, geolocation, image picker, camera,
 `permission_handler`, and Firebase messaging dependencies remain forbidden by
 the template validator until their deliberate capability integration is
-approved. No active Android permissions, external service startup, tracking,
-or implicit credential access are enabled by these dependency decisions.
+approved. The merged Android manifest has one app-defined,
+signature-protected dynamic-receiver IPC guard, validated against the actual
+manifest package by the APK baseline gate. This is not a hardware or
+personal-data platform permission and does not activate an optional capability.
+No such optional capability permissions, external service startup, tracking,
+or implicit credential access are enabled by these dependency decisions. See
+[the Android CI manifest contract](core/CI.md) for the exact pair requirement.
 
 ## Platform notes
 

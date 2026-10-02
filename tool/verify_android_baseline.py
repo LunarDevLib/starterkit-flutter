@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,8 @@ ANDROID = f"{{{ANDROID_NS}}}"
 EXPECTED_MIN_SDK = "24"
 EXPECTED_DEBUG_PERMISSIONS = {"android.permission.INTERNET"}
 EXPECTED_RELEASE_PERMISSIONS: set[str] = set()
+SIGNATURE_IPC_PERMISSION_SUFFIX = ".DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
+_ANDROID_PACKAGE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")
 FORBIDDEN_COMPONENT_TAGS = {"service", "receiver", "provider", "activity-alias"}
 COMPONENT_TAGS = FORBIDDEN_COMPONENT_TAGS | {"activity"}
 
@@ -43,6 +46,18 @@ def resolve_apkanalyzer() -> str:
     )
 
 
+def _is_exact_signature_protection_level(value: str | None) -> bool:
+    """Accept signature's symbolic value or only its numeric flag value 2."""
+    if value == "signature":
+        return True
+    if value is None:
+        return False
+    if value.startswith(("0x", "0X")):
+        digits = value[2:]
+        return bool(re.fullmatch(r"[0-9a-fA-F]+", digits)) and int(digits, 16) == 2
+    return bool(re.fullmatch(r"[0-9]+", value)) and int(value, 10) == 2
+
+
 def verify_manifest_xml(xml_text: str, variant: str) -> tuple[set[str], list[str]]:
     """Validate manifest XML and return declared permissions/components."""
     if variant not in {"debug", "release"}:
@@ -54,18 +69,71 @@ def verify_manifest_xml(xml_text: str, variant: str) -> tuple[set[str], list[str
     if root.tag != "manifest":
         raise BaselineError(f"expected manifest root element, got {root.tag!r}")
 
-    permissions = {
+    permission_uses = [
         element.get(ANDROID + "name", "")
         for element in root
         if element.tag.rsplit("}", 1)[-1].startswith("uses-permission")
-    }
+    ]
+    if len(permission_uses) != len(set(permission_uses)):
+        raise BaselineError("duplicate uses-permission entries are not allowed")
+
+    permission_declaration_nodes = [
+        element
+        for element in root
+        if element.tag.rsplit("}", 1)[-1]
+        in {"permission", "permission-tree", "permission-group"}
+    ]
+    if any(
+        element.tag.rsplit("}", 1)[-1] != "permission"
+        for element in permission_declaration_nodes
+    ):
+        raise BaselineError("permission-tree and permission-group declarations are not allowed")
+    permission_declarations = permission_declaration_nodes
+    declared_names = [
+        element.get(ANDROID + "name", "") for element in permission_declarations
+    ]
+    guard_names = [
+        name
+        for name in permission_uses + declared_names
+        if name.endswith(SIGNATURE_IPC_PERMISSION_SUFFIX)
+    ]
+    signature_guard: str | None = None
+    if guard_names:
+        manifest_package = root.get("package", "")
+        if not _ANDROID_PACKAGE.fullmatch(manifest_package):
+            raise BaselineError(
+                "a valid manifest package is required for the signature IPC permission"
+            )
+        signature_guard = f"{manifest_package}{SIGNATURE_IPC_PERMISSION_SUFFIX}"
+        if any(name != signature_guard for name in guard_names):
+            raise BaselineError(
+                "only the manifest package's exact signature IPC permission is allowed"
+            )
+        if permission_uses.count(signature_guard) != 1:
+            raise BaselineError(
+                "the signature IPC permission must be requested exactly once"
+            )
+        if len(permission_declarations) != 1 or declared_names != [signature_guard]:
+            raise BaselineError(
+                "the signature IPC permission must have exactly one matching declaration"
+            )
+        protection_level = permission_declarations[0].get(ANDROID + "protectionLevel")
+        if not _is_exact_signature_protection_level(protection_level):
+            raise BaselineError(
+                "the signature IPC permission protectionLevel must equal signature (2) exactly"
+            )
+    elif permission_declarations:
+        raise BaselineError("application-defined permission declarations are not allowed")
+
+    permissions = set(permission_uses)
+    platform_permissions = permissions - ({signature_guard} if signature_guard else set())
     expected_permissions = (
         EXPECTED_DEBUG_PERMISSIONS if variant == "debug" else EXPECTED_RELEASE_PERMISSIONS
     )
-    if permissions != expected_permissions:
+    if platform_permissions != expected_permissions:
         raise BaselineError(
-            f"{variant} permissions must be {sorted(expected_permissions)}, "
-            f"found {sorted(permissions)}"
+            f"{variant} platform permissions must be {sorted(expected_permissions)}, "
+            f"found {sorted(platform_permissions)}"
         )
 
     uses_sdk = next(
@@ -143,7 +211,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     print(f"Verified {args.variant} APK manifest: {args.apk}")
-    print(f"Permissions: {', '.join(sorted(permissions)) if permissions else '(none)'}")
+    signature_guards = {
+        permission
+        for permission in permissions
+        if permission.endswith(SIGNATURE_IPC_PERMISSION_SUFFIX)
+    }
+    platform_permissions = permissions - signature_guards
+    print(
+        "Platform permissions: "
+        f"{', '.join(sorted(platform_permissions)) if platform_permissions else '(none)'}"
+    )
+    print(
+        "App-defined signature IPC guard: "
+        f"{', '.join(sorted(signature_guards)) if signature_guards else '(none)'}"
+    )
     print(f"Application components: {', '.join(components)}")
     print(f"Minimum SDK: {EXPECTED_MIN_SDK}; allowBackup: false")
     return 0
