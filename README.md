@@ -90,3 +90,20 @@ link를 검증하지 않습니다. 소비 제품은 자체 요구에 맞는 검�
 - [기능 확장 가이드](FEATURE_SETUP.md)
 - [보안 경계](SECURITY.md)
 - [아키텍처와 성장 규칙](docs/ARCHITECTURE.md)
+
+
+## Optional Capabilities
+
+Starter Kit capability code may be present as an inert dependency without being
+part of the default runtime. The default SampleApp does not import, create, route
+to, or automatically load any optional capability.
+
+The first implemented optional capability is the native-backed WebView boundary
+in `packages/starterkit_webview`. It is disconnected by default and requires
+explicit product composition. Remote content additionally requires the product
+to add the Android `INTERNET` permission; the Starter Kit baseline does not add
+it. Bridge support is disabled by default and, when enabled, validates the trusted
+HTTPS source origin and main-frame status at the native WebView boundary.
+
+See [Capability Matrix](docs/CAPABILITY_MATRIX.md) and
+[WebView capability](docs/capabilities/WEBVIEW.md).

@@ -76,6 +76,14 @@ void main(List<String> args) {
       }
     }
   }
+  for (final file in _dartSources(root, 'lib')) {
+    final content = file.readAsStringSync();
+    if (content.contains('package:starterkit_webview/')) {
+      failures.add(
+        'default app must not import the optional starterkit_webview capability: ${_relative(root, file)}',
+      );
+    }
+  }
   final pubspec = File('${root.path}/pubspec.yaml').readAsStringSync();
   final forbidden = RegExp(
     r'^\s{2}(firebase_|sentry|webview|geolocator|image_picker|camera|permission_handler|firebase_messaging)',
