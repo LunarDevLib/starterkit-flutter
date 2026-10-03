@@ -23,10 +23,22 @@ class QrWorkflowTests(unittest.TestCase):
         self.assertNotIn("branches: [feat/", WORKFLOW)
 
     def test_baseline_source_and_renamed_android_preserved(self):
-        for name in ("verify", "renamed-copy"):
+        common = job("common-checks")
+        for command in (
+            "flutter pub get --enforce-lockfile",
+            "flutter gen-l10n",
+            "flutter analyze",
+            "flutter test",
+            "dart format --output=none",
+            "packages/starterkit_qr_barcode",
+        ):
+            self.assertIn(command, common, ("common-checks", command))
+        self.assertIn("canonical template unexpectedly passed product readiness", common)
+
+        for name in ("android-source", "renamed-copy"):
             text = job(name)
             for command in ("flutter pub get --enforce-lockfile", "flutter gen-l10n", "flutter analyze",
-                            "flutter test", "flutter build apk --debug", "flutter build apk --release",
+                            "flutter build apk --debug", "flutter build apk --release",
                             "--variant debug", "--variant release", "collect-android --mode default"):
                 self.assertIn(command, text, (name, command))
             self.assertIn("build/ci-qr-evidence/", text)
@@ -34,7 +46,6 @@ class QrWorkflowTests(unittest.TestCase):
             self.assertIn("--target test/tool/fixtures/qr_consumer/main.dart", text)
             self.assertIn(":starterkit_qr_barcode:testDebugUnitTest", text)
             self.assertIn("collect-android --mode opt-in", text)
-        self.assertIn("canonical template unexpectedly passed product readiness", job("verify"))
         self.assertIn("dart run tool/validate_template.dart --release-readiness", job("renamed-copy"))
 
     def test_both_ios_identities_and_variants_default_and_optin(self):
@@ -53,9 +64,11 @@ class QrWorkflowTests(unittest.TestCase):
         swift = job("swift-policy")
         self.assertIn("swift test --package-path packages/starterkit_qr_barcode/ios", swift)
         self.assertLess(swift.index("starterkit_qr_barcode"), swift.index("starterkit_preferences"))
-        self.assertIn("needs: [verify, swift-policy]", job("ios-simulator"))
-        self.assertIn("needs: [verify, swift-policy, ios-simulator]", job("qr-opt-in-ios"))
-        for name in ("verify", "renamed-copy", "ios-simulator"):
+        self.assertIn("needs: plan", job("ios-simulator"))
+        self.assertIn("needs: plan", job("qr-opt-in-ios"))
+        self.assertNotIn("needs.swift-policy", job("ios-simulator"))
+        self.assertNotIn("needs.swift-policy", job("qr-opt-in-ios"))
+        for name in ("common-checks", "renamed-copy"):
             text = job(name)
             self.assertIn("packages/starterkit_qr_barcode", text)
             self.assertIn("flutter pub get --enforce-lockfile", text)
@@ -64,7 +77,7 @@ class QrWorkflowTests(unittest.TestCase):
 
     def test_qr_locked_resolution_precedes_root_checks_in_each_baseline_lane(self):
         qr = "packages/starterkit_qr_barcode"
-        source = job("verify")
+        source = job("common-checks")
         resolve = source.index("working-directory: " + qr)
         locked_pub = source.index("run: flutter pub get --enforce-lockfile", resolve)
         for command in ("dart format --output=none", "- run: flutter analyze\n", "name: Test template or consuming product"):
@@ -79,18 +92,22 @@ class QrWorkflowTests(unittest.TestCase):
 
         ios = job("ios-simulator")
         source_checks, renamed_checks = ios.split("- name: Bootstrap fresh copy and iOS simulator build", 1)
-        for checks, test_command in ((source_checks, "flutter test\n"), (renamed_checks, "flutter test --exclude-tags template-only")):
-            locked_pub = checks.index(f"(cd {qr} && flutter pub get --enforce-lockfile")
-            for command in ("dart format --output=none", "flutter analyze\n", test_command):
-                self.assertLess(locked_pub, checks.index(command), command)
+        for checks in (source_checks, renamed_checks):
+            locked_pub = checks.index("flutter pub get --enforce-lockfile")
+            self.assertLess(locked_pub, checks.index("flutter build ios --simulator --no-codesign"))
+            self.assertLess(locked_pub, checks.index("flutter build ios --release --no-codesign"))
 
     def test_uploads_follow_default_evidence_and_never_upload_whole_build_tree(self):
         for name, capture, upload in (
-            ("verify", "Capture default QR absence evidence", "Upload default Android QR absence evidence"),
+            ("android-source", "Capture default QR absence evidence", "Upload default Android QR absence evidence"),
             ("renamed-copy", "Capture renamed default QR absence evidence", "Upload renamed default Android QR absence evidence"),
         ):
             text = job(name)
             self.assertLess(text.index(capture), text.index(upload))
+        self.assertIn("name: qr-default-android-source", job("android-source"))
+        self.assertIn("name: qr-opt-in-android-source", job("android-source"))
+        self.assertIn("name: qr-default-android-renamed", job("renamed-copy"))
+        self.assertIn("name: qr-opt-in-android-renamed", job("renamed-copy"))
         self.assertNotRegex(WORKFLOW, r"path:.*qr-[^\n]*consumer/build/\s*$")
         self.assertNotRegex(WORKFLOW, r"hashes --root build(?:\s|$)")
 

@@ -138,78 +138,67 @@ void main() {
     },
   );
 
-  test('macOS runs full source/renamed checks before unsigned iOS builds', () {
-    final iosJob = _workflowJob(source, 'ios-simulator');
-    final swiftJob = _workflowJob(source, 'swift-policy');
-    expect(iosJob, contains('runs-on: macos-latest'));
-    expect(
-      'swift test --package-path packages/starterkit_preferences/ios'
-          .allMatches('$swiftJob$iosJob')
-          .length,
-      2,
-    );
-    expect(iosJob, contains('flutter gen-l10n'));
-    expect(iosJob, contains('dart run tool/validate_template.dart'));
-    expect(iosJob, contains('flutter build ios --simulator --no-codesign'));
-    expect(iosJob, contains('flutter build ios --release --no-codesign'));
-    expect(
-      iosJob.indexOf('flutter analyze\n'),
-      lessThan(iosJob.indexOf('flutter build ios --simulator --no-codesign')),
-    );
-    final renamedStart = iosJob.indexOf(
-      'Bootstrap fresh copy and iOS simulator build',
-    );
-    final renamedBuild = iosJob.indexOf(
-      'flutter build ios --simulator --no-codesign',
-      renamedStart,
-    );
-    expect(renamedStart, isNonNegative);
-    expect(
-      iosJob.indexOf(
-        'dart run tool/validate_template.dart --release-readiness',
-        renamedStart,
-      ),
-      lessThan(renamedBuild),
-    );
-    expect(
-      iosJob.indexOf('flutter analyze', renamedStart),
-      lessThan(renamedBuild),
-    );
-    expect(
-      iosJob.indexOf('flutter test --exclude-tags template-only', renamedStart),
-      lessThan(renamedBuild),
-    );
-    final sourceStart = iosJob.indexOf(
-      'name: Validate source and compile iOS targets',
-    );
-    expect(sourceStart, isNonNegative);
-    expect(renamedStart, greaterThan(sourceStart));
-    for (final (checks, testCommand) in [
-      (iosJob.substring(sourceStart, renamedStart), 'flutter test\n'),
-      (
-        iosJob.substring(renamedStart),
-        'flutter test --exclude-tags template-only',
-      ),
-    ]) {
-      final build = checks.indexOf(
-        'flutter build ios --simulator --no-codesign',
+  test(
+    'common checks remain unconditional; iOS builds follow impact flags',
+    () {
+      final iosJob = _workflowJob(source, 'ios-simulator');
+      final commonJob = _workflowJob(source, 'common-checks');
+      final planJob = _workflowJob(source, 'plan');
+      expect(iosJob, contains('runs-on: macos-latest'));
+      expect(commonJob, contains('flutter gen-l10n'));
+      expect(commonJob, contains('dart run tool/validate_template.dart'));
+      expect(commonJob, contains('flutter analyze'));
+      expect(commonJob, contains('flutter test'));
+      expect(commonJob, contains('python3 -m unittest discover -s test/tool'));
+      expect(commonJob, contains('needs: plan'));
+      expect(commonJob, contains("needs.plan.result == 'success'"));
+      expect(iosJob, contains("needs.plan.outputs.ios_source == 'true'"));
+      expect(iosJob, contains("needs.plan.outputs.renamed_ios == 'true'"));
+      expect(iosJob, contains('flutter build ios --simulator --no-codesign'));
+      expect(iosJob, contains('flutter build ios --release --no-codesign'));
+      expect(planJob, contains('Select trusted impact planner'));
+      expect(planJob, contains('github.event.pull_request.base.sha'));
+      expect(planJob, contains(r'git show "$trusted_ref:tool/ci_impact.py"'));
+      expect(
+        planJob,
+        contains('trusted planner unavailable at base; conservative full run'),
       );
-      expect(build, isNonNegative);
-      for (final command in [
-        'flutter pub get --enforce-lockfile',
-        'flutter gen-l10n',
-        'dart run tool/validate_template.dart',
-        'dart format --output=none --set-exit-if-changed',
-        'flutter analyze\n',
-        testCommand,
-        'python3 -m unittest discover -s test/tool',
-      ]) {
-        final check = checks.indexOf(command);
-        expect(check, isNonNegative, reason: command);
-        expect(check, lessThan(build), reason: command);
-      }
-    }
-  });
+      expect(source, contains('type: boolean'));
+      expect(source, contains('default: false'));
+      final renamedStart = iosJob.indexOf(
+        'Bootstrap fresh copy and iOS simulator build',
+      );
+      final renamedBuild = iosJob.indexOf(
+        'flutter build ios --simulator --no-codesign',
+        renamedStart,
+      );
+      expect(renamedStart, isNonNegative);
+      expect(
+        iosJob.indexOf(
+          'dart run tool/validate_template.dart --release-readiness',
+          renamedStart,
+        ),
+        lessThan(renamedBuild),
+      );
+      expect(
+        iosJob.indexOf('flutter analyze', renamedStart),
+        lessThan(renamedBuild),
+      );
+      expect(
+        iosJob.indexOf(
+          'flutter test --exclude-tags template-only',
+          renamedStart,
+        ),
+        lessThan(renamedBuild),
+      );
+      final sourceStart = iosJob.indexOf(
+        'name: Validate source and compile iOS targets',
+      );
+      expect(sourceStart, isNonNegative);
+      expect(renamedStart, greaterThan(sourceStart));
+      expect(commonJob, contains("needs.plan.result == 'success'"));
+    },
+  );
 
   test('Swift policy is an independent fast gate for iOS CI', () {
     expect(source, contains('  push:\n    branches: [main]'));
@@ -233,17 +222,16 @@ void main() {
     }
     expect(swiftJob, contains('runs-on: macos-latest'));
     expect(swiftJob, contains('actions/checkout@v4'));
-    expect(swiftJob, isNot(contains('needs:')));
+    expect(swiftJob, contains('needs: plan'));
+    expect(swiftJob, contains("needs.plan.result == 'success'"));
+    expect(swiftJob, isNot(contains('needs: [plan, common-checks')));
+    expect(swiftJob, isNot(contains('common-checks')));
     expect(swiftJob, isNot(contains('flutter')));
 
     final iosJob = _workflowJob(source, 'ios-simulator');
-    expect(iosJob, contains('needs: [verify, swift-policy]'));
-    expect(
-      iosJob,
-      contains(
-        "needs.verify.outputs.is_template != '' && needs.swift-policy.result == 'success'",
-      ),
-    );
+    expect(iosJob, contains('needs: plan'));
+    expect(iosJob, contains("needs.plan.result == 'success'"));
+    expect(iosJob, isNot(contains('needs.swift-policy')));
     expect(iosJob, contains('Bootstrap fresh copy and iOS simulator build'));
     expect(iosJob, contains('flutter build ios --simulator --no-codesign'));
     expect(iosJob, contains('ios-built-plists-source'));
@@ -334,32 +322,92 @@ void main() {
     expect(renamedLane, isNot(contains('--xcode-project')));
   });
 
+  test('QR opt-in iOS gate is independent from baseline iOS compilation', () {
+    final qrJob = _workflowJob(source, 'qr-opt-in-ios');
+    expect(qrJob, contains('runs-on: macos-latest'));
+    expect(qrJob, contains('needs: plan'));
+    expect(qrJob, contains("needs.plan.outputs.qr_ios == 'true'"));
+    expect(qrJob, isNot(contains('needs.swift-policy')));
+    expect(qrJob, isNot(contains('needs.ios-simulator')));
+    expect(qrJob, contains('dart run tool/validate_template.dart'));
+    expect(
+      qrJob,
+      contains('dart run tool/validate_template.dart --release-readiness'),
+    );
+    expect(
+      qrJob,
+      contains(
+        'flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart',
+      ),
+    );
+    expect(
+      '--target test/tool/fixtures/qr_consumer/main.dart'.allMatches(qrJob),
+      hasLength(4),
+    );
+    expect(qrJob, contains('flutter build ios --simulator --no-codesign'));
+    expect(qrJob, contains('flutter build ios --release --no-codesign'));
+  });
+
   test(
-    'QR opt-in iOS gate is separate and depends on verified baseline jobs',
+    'final stable verify aggregates every job and validates required results',
     () {
-      final qrJob = _workflowJob(source, 'qr-opt-in-ios');
-      expect(qrJob, contains('runs-on: macos-latest'));
-      expect(qrJob, contains('needs: [verify, swift-policy, ios-simulator]'));
-      expect(qrJob, contains("needs.verify.outputs.is_template == 'true'"));
-      expect(qrJob, contains("needs.swift-policy.result == 'success'"));
-      expect(qrJob, contains("needs.ios-simulator.result == 'success'"));
-      expect(qrJob, contains('dart run tool/validate_template.dart'));
+      final aggregate = _workflowJob(source, 'verify');
       expect(
-        qrJob,
-        contains('dart run tool/validate_template.dart --release-readiness'),
-      );
-      expect(
-        qrJob,
+        aggregate,
         contains(
-          'flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart',
+          'needs: [plan, common-checks, swift-policy, android-source, renamed-copy, ios-simulator, qr-opt-in-ios]',
         ),
       );
-      expect(
-        '--target test/tool/fixtures/qr_consumer/main.dart'.allMatches(qrJob),
-        hasLength(4),
-      );
-      expect(qrJob, contains('flutter build ios --simulator --no-codesign'));
-      expect(qrJob, contains('flutter build ios --release --no-codesign'));
+      expect(aggregate, contains('if: always()'));
+      expect(aggregate, contains('tool/ci_aggregate.py'));
+      expect(aggregate, contains(r'${{ toJSON(needs) }}'));
+      expect(aggregate, isNot(contains('continue-on-error:')));
     },
   );
+
+  test('router uses least-privilege read access and PR-only cancellation', () {
+    expect(source, contains('permissions:\n  contents: read'));
+    expect(
+      source,
+      contains(
+        r"cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+      ),
+    );
+    expect(source, contains('  pull_request:'));
+    expect(source, contains('branches: [main]'));
+    expect(source, contains('full:'));
+  });
+
+  test('native jobs run in parallel after planning with bounded timeouts', () {
+    for (final name in [
+      'common-checks',
+      'swift-policy',
+      'android-source',
+      'renamed-copy',
+      'ios-simulator',
+      'qr-opt-in-ios',
+    ]) {
+      final job = _workflowJob(source, name);
+      expect(job, contains('needs: plan'), reason: name);
+      expect(job, contains('timeout-minutes:'), reason: name);
+      expect(job, isNot(contains('needs: [plan, swift-policy')));
+      expect(job, isNot(contains('needs: [plan, common-checks')));
+    }
+    expect(
+      _workflowJob(source, 'android-source'),
+      contains('timeout-minutes: 25'),
+    );
+    expect(
+      _workflowJob(source, 'renamed-copy'),
+      contains('timeout-minutes: 25'),
+    );
+    expect(
+      _workflowJob(source, 'ios-simulator'),
+      contains('timeout-minutes: 30'),
+    );
+    expect(
+      _workflowJob(source, 'qr-opt-in-ios'),
+      contains('timeout-minutes: 25'),
+    );
+  });
 }
