@@ -32,6 +32,8 @@ class StarterkitPlatformPlugin :
     PluginRegistry.ActivityResultListener {
     private lateinit var context: Context
     private lateinit var channel: MethodChannel
+    private lateinit var locationChannel: MethodChannel
+    private lateinit var locationHandler: AndroidLocationHandler
     private var activityBinding: ActivityPluginBinding? = null
     private var pending: PendingOperation? = null
     private var activityResultListenerRegistered = false
@@ -42,9 +44,14 @@ class StarterkitPlatformPlugin :
         context = binding.applicationContext
         channel = MethodChannel(binding.binaryMessenger, CHANNEL)
         channel.setMethodCallHandler(this)
+        locationHandler = AndroidLocationHandler(context, main)
+        locationChannel = MethodChannel(binding.binaryMessenger, LOCATION_CHANNEL)
+        locationChannel.setMethodCallHandler(locationHandler)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        locationHandler.onEngineDetached()
+        locationChannel.setMethodCallHandler(null)
         settlePending(mediaOutcome("failure", "media.engine_detached"), deleteFile = true)
         channel.setMethodCallHandler(null)
         worker?.shutdownNow()
@@ -53,6 +60,7 @@ class StarterkitPlatformPlugin :
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
+        locationHandler.onAttachedToActivity(binding)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -68,6 +76,7 @@ class StarterkitPlatformPlugin :
     }
 
     private fun detachActivity() {
+        locationHandler.onActivityDetached()
         if (activityResultListenerRegistered) {
             activityBinding?.removeActivityResultListener(this)
             activityResultListenerRegistered = false
@@ -422,5 +431,6 @@ class StarterkitPlatformPlugin :
 
     companion object {
         private const val CHANNEL = "starterkit/platform/media"
+        private const val LOCATION_CHANNEL = "starterkit/platform/location"
     }
 }
