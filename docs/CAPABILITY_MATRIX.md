@@ -12,7 +12,7 @@ capability.
 | Gallery | Yes | Dart contract + Android policy + iOS policy + native compile gates | No | [GALLERY](capabilities/GALLERY.md) |
 | Location | Yes | Dart contract tests passed; native/consumer CI pending (no device PASS) | No | [LOCATION](capabilities/LOCATION.md) |
 | QR / Barcode | Planned | No | No | Planned |
-| Biometric | Planned | No | No | Planned |
+| Biometric | Yes | Dart contract tests + native policy coverage; native/consumer CI pending | No | [BIOMETRIC](capabilities/BIOMETRIC.md) |
 | Analytics | Planned | No | No | Planned |
 | Crash Reporting | Planned | No | No | Planned |
 | Social Login | Planned | No | No | Planned |
