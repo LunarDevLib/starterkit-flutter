@@ -11,7 +11,11 @@ let package = Package(
     .target(
       name: "StarterkitPlatformPolicy",
       path: "Classes",
-      exclude: ["StarterkitPlatformPlugin.swift", "IOSLocationAdapter.swift"]
+      exclude: [
+        "StarterkitPlatformPlugin.swift",
+        "IOSLocationAdapter.swift",
+        "IOSBiometricAdapter.swift",
+      ]
     ),
     .testTarget(
       name: "StarterkitPlatformPolicyTests",

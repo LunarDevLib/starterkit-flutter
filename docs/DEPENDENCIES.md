@@ -122,11 +122,33 @@ permission packages are not part of this capability. Source policy and Dart
 contract tests do not constitute device or remote consumer CI evidence; consumer
 CI is pending for this change.
 
+### Biometric
+
+`starterkit_platform` also exposes an opt-in, disabled-by-default biometric
+capability. Registration installs its independent channel only; availability
+checks, prompts, hardware queries, contexts, observers, and timers are not started
+at registration. The API uses Android framework biometric APIs and Apple's
+optional `LocalAuthentication` system framework. There is no additional Gradle
+dependency, Dart package, or vendor SDK.
+
+| Native API | Classification | Platform floor / license |
+| --- | --- | --- |
+| Android framework `BiometricManager` / `BiometricPrompt` | Baseline OS API; no Gradle dependency | Used only on API 29+; system-provided, no separately bundled license. API 24–28 reports unavailable. |
+| Apple `LocalAuthentication` | Optional native/system framework | Existing iOS deployment floor is unchanged; OS-provided framework, no separate package or vendor license. |
+
+The plugin declares no biometric permission or usage string. Product activation
+owns Android's normal `USE_BIOMETRIC` manifest permission and the iOS
+`NSFaceIDUsageDescription` key when Face ID is used; Touch ID does not require the
+Face ID key. This capability is only a local OS authentication signal, not server
+identity, crypto-key binding, or secure-storage behavior. Dart contract tests and
+native policy coverage do not replace final native/consumer CI or device evidence.
+
 ## Optional future integrations (not implemented)
 
 Dio, cloud SDKs, Sentry, Firebase services, third-party geolocation/image-picker/
-camera packages, and biometric packages are not included or configured. They require separate
-capability-specific approval, platform/permission review, and tests.
+camera packages, and third-party biometric packages are not included or configured.
+They require separate capability-specific approval, platform/permission review,
+and tests.
 
 `connectivity_plus` was explicitly rejected for this Core set: in
 `connectivity_plus-7.3.2/ios/connectivity_plus/Sources/connectivity_plus/ConnectivityPlusPlugin.swift`,

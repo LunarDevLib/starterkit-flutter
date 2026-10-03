@@ -33,7 +33,9 @@ class StarterkitPlatformPlugin :
     private lateinit var context: Context
     private lateinit var channel: MethodChannel
     private lateinit var locationChannel: MethodChannel
+    private lateinit var biometricChannel: MethodChannel
     private lateinit var locationHandler: AndroidLocationHandler
+    private lateinit var biometricHandler: AndroidBiometricHandler
     private var activityBinding: ActivityPluginBinding? = null
     private var pending: PendingOperation? = null
     private var activityResultListenerRegistered = false
@@ -47,9 +49,14 @@ class StarterkitPlatformPlugin :
         locationHandler = AndroidLocationHandler(context, main)
         locationChannel = MethodChannel(binding.binaryMessenger, LOCATION_CHANNEL)
         locationChannel.setMethodCallHandler(locationHandler)
+        biometricHandler = AndroidBiometricHandler(context, main)
+        biometricChannel = MethodChannel(binding.binaryMessenger, BIOMETRIC_CHANNEL)
+        biometricChannel.setMethodCallHandler(biometricHandler)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        biometricHandler.onEngineDetached()
+        biometricChannel.setMethodCallHandler(null)
         locationHandler.onEngineDetached()
         locationChannel.setMethodCallHandler(null)
         settlePending(mediaOutcome("failure", "media.engine_detached"), deleteFile = true)
@@ -61,6 +68,7 @@ class StarterkitPlatformPlugin :
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activityBinding = binding
         locationHandler.onAttachedToActivity(binding)
+        biometricHandler.onAttachedToActivity(binding)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -76,6 +84,7 @@ class StarterkitPlatformPlugin :
     }
 
     private fun detachActivity() {
+        biometricHandler.onActivityDetached()
         locationHandler.onActivityDetached()
         if (activityResultListenerRegistered) {
             activityBinding?.removeActivityResultListener(this)
@@ -432,5 +441,6 @@ class StarterkitPlatformPlugin :
     companion object {
         private const val CHANNEL = "starterkit/platform/media"
         private const val LOCATION_CHANNEL = "starterkit/platform/location"
+        private const val BIOMETRIC_CHANNEL = "starterkit/platform/biometric"
     }
 }

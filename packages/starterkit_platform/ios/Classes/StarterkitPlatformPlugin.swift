@@ -10,6 +10,8 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
   private var channel: FlutterMethodChannel?
   private var locationChannel: FlutterMethodChannel?
   private var locationAdapter: IOSLocationAdapter?
+  private var biometricChannel: FlutterMethodChannel?
+  private var biometricAdapter: IOSBiometricAdapter?
   private var pending: PendingOperation?
   private var galleryDelegate: AnyObject?
   private var engineAttached = true
@@ -32,6 +34,23 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
       guard let instance, instance.engineAttached, let adapter = instance.locationAdapter else {
         result(
           LocationPolicy.detachedResponse(
+            method: call.method, arguments: call.arguments as? [String: Any]
+          ) ?? FlutterMethodNotImplemented
+        )
+        return
+      }
+      adapter.handle(call, result: result)
+    }
+    let biometricChannel = FlutterMethodChannel(
+      name: "starterkit/platform/biometric",
+      binaryMessenger: registrar.messenger()
+    )
+    instance.biometricChannel = biometricChannel
+    instance.biometricAdapter = IOSBiometricAdapter()
+    biometricChannel.setMethodCallHandler { [weak instance] call, result in
+      guard let instance, instance.engineAttached, let adapter = instance.biometricAdapter else {
+        result(
+          BiometricPolicy.detachedResponse(
             method: call.method, arguments: call.arguments as? [String: Any]
           ) ?? FlutterMethodNotImplemented
         )
@@ -88,6 +107,11 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     let detachedLocationAdapter = locationAdapter
     locationAdapter = nil
     detachedLocationAdapter?.detach()
+    biometricChannel?.setMethodCallHandler(nil)
+    biometricChannel = nil
+    let detachedBiometricAdapter = biometricAdapter
+    biometricAdapter = nil
+    detachedBiometricAdapter?.detach()
     let operation = pending
     pending = nil
     galleryDelegate = nil
