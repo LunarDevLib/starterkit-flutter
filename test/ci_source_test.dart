@@ -2,6 +2,17 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+String _workflowJob(String source, String name) {
+  final match = RegExp(
+    '^  ${RegExp.escape(name)}:\\n'
+    r'.*?(?=^  [\w-]+:|(?![\s\S]))',
+    multiLine: true,
+    dotAll: true,
+  ).firstMatch(source);
+  if (match == null) throw StateError('Missing workflow job: $name');
+  return match.group(0)!;
+}
+
 void main() {
   final source = File('.github/workflows/flutter.yml').readAsStringSync();
 
@@ -128,52 +139,76 @@ void main() {
   );
 
   test('macOS runs full source/renamed checks before unsigned iOS builds', () {
-    expect(source, contains('runs-on: macos-latest'));
+    final iosJob = _workflowJob(source, 'ios-simulator');
+    final swiftJob = _workflowJob(source, 'swift-policy');
+    expect(iosJob, contains('runs-on: macos-latest'));
     expect(
       'swift test --package-path packages/starterkit_preferences/ios'
-          .allMatches(source)
+          .allMatches('$swiftJob$iosJob')
           .length,
       2,
     );
-    expect(source, contains('flutter gen-l10n'));
-    expect(source, contains('dart run tool/validate_template.dart'));
-    expect(source, contains('flutter build ios --simulator --no-codesign'));
-    expect(source, contains('flutter build ios --release --no-codesign'));
+    expect(iosJob, contains('flutter gen-l10n'));
+    expect(iosJob, contains('dart run tool/validate_template.dart'));
+    expect(iosJob, contains('flutter build ios --simulator --no-codesign'));
+    expect(iosJob, contains('flutter build ios --release --no-codesign'));
     expect(
-      source.indexOf(
-        'flutter analyze\n',
-        source.indexOf('runs-on: macos-latest'),
-      ),
-      lessThan(
-        source.indexOf(
-          'flutter build ios --simulator --no-codesign',
-          source.indexOf('runs-on: macos-latest'),
-        ),
-      ),
+      iosJob.indexOf('flutter analyze\n'),
+      lessThan(iosJob.indexOf('flutter build ios --simulator --no-codesign')),
     );
-    final renamedStart = source.indexOf(
+    final renamedStart = iosJob.indexOf(
       'Bootstrap fresh copy and iOS simulator build',
     );
-    final renamedBuild = source.indexOf(
+    final renamedBuild = iosJob.indexOf(
       'flutter build ios --simulator --no-codesign',
       renamedStart,
     );
     expect(renamedStart, isNonNegative);
     expect(
-      source.indexOf(
+      iosJob.indexOf(
         'dart run tool/validate_template.dart --release-readiness',
         renamedStart,
       ),
       lessThan(renamedBuild),
     );
     expect(
-      source.indexOf('flutter analyze', renamedStart),
+      iosJob.indexOf('flutter analyze', renamedStart),
       lessThan(renamedBuild),
     );
     expect(
-      source.indexOf('flutter test --exclude-tags template-only', renamedStart),
+      iosJob.indexOf('flutter test --exclude-tags template-only', renamedStart),
       lessThan(renamedBuild),
     );
+    final sourceStart = iosJob.indexOf(
+      'name: Validate source and compile iOS targets',
+    );
+    expect(sourceStart, isNonNegative);
+    expect(renamedStart, greaterThan(sourceStart));
+    for (final (checks, testCommand) in [
+      (iosJob.substring(sourceStart, renamedStart), 'flutter test\n'),
+      (
+        iosJob.substring(renamedStart),
+        'flutter test --exclude-tags template-only',
+      ),
+    ]) {
+      final build = checks.indexOf(
+        'flutter build ios --simulator --no-codesign',
+      );
+      expect(build, isNonNegative);
+      for (final command in [
+        'flutter pub get --enforce-lockfile',
+        'flutter gen-l10n',
+        'dart run tool/validate_template.dart',
+        'dart format --output=none --set-exit-if-changed',
+        'flutter analyze\n',
+        testCommand,
+        'python3 -m unittest discover -s test/tool',
+      ]) {
+        final check = checks.indexOf(command);
+        expect(check, isNonNegative, reason: command);
+        expect(check, lessThan(build), reason: command);
+      }
+    }
   });
 
   test('Swift policy is an independent fast gate for iOS CI', () {
@@ -184,11 +219,12 @@ void main() {
     final iosStart = source.indexOf('  ios-simulator:');
     expect(swiftStart, isNonNegative);
     expect(iosStart, greaterThan(swiftStart));
-    final swiftJob = source.substring(swiftStart, iosStart);
+    final swiftJob = _workflowJob(source, 'swift-policy');
     for (final package in [
       'starterkit_preferences',
       'starterkit_webview',
       'starterkit_platform',
+      'starterkit_qr_barcode',
     ]) {
       expect(
         swiftJob,
@@ -200,7 +236,7 @@ void main() {
     expect(swiftJob, isNot(contains('needs:')));
     expect(swiftJob, isNot(contains('flutter')));
 
-    final iosJob = source.substring(iosStart);
+    final iosJob = _workflowJob(source, 'ios-simulator');
     expect(iosJob, contains('needs: [verify, swift-policy]'));
     expect(
       iosJob,
@@ -254,16 +290,17 @@ void main() {
   });
 
   test('iOS plist gate derives source identity and pins renamed identity', () {
-    final sourceJob = source.indexOf(
+    final iosJob = _workflowJob(source, 'ios-simulator');
+    final sourceJob = iosJob.indexOf(
       'name: Validate source and compile iOS targets',
     );
-    final renamedJob = source.indexOf(
+    final renamedJob = iosJob.indexOf(
       'name: Bootstrap fresh copy and iOS simulator build',
     );
     expect(sourceJob, isNonNegative);
     expect(renamedJob, greaterThan(sourceJob));
-    final sourceLane = source.substring(sourceJob, renamedJob);
-    final renamedLane = source.substring(renamedJob);
+    final sourceLane = iosJob.substring(sourceJob, renamedJob);
+    final renamedLane = iosJob.substring(renamedJob);
 
     expect(sourceLane, contains('source_bundle_id_assertion=()'));
     expect(
@@ -296,4 +333,33 @@ void main() {
     );
     expect(renamedLane, isNot(contains('--xcode-project')));
   });
+
+  test(
+    'QR opt-in iOS gate is separate and depends on verified baseline jobs',
+    () {
+      final qrJob = _workflowJob(source, 'qr-opt-in-ios');
+      expect(qrJob, contains('runs-on: macos-latest'));
+      expect(qrJob, contains('needs: [verify, swift-policy, ios-simulator]'));
+      expect(qrJob, contains("needs.verify.outputs.is_template == 'true'"));
+      expect(qrJob, contains("needs.swift-policy.result == 'success'"));
+      expect(qrJob, contains("needs.ios-simulator.result == 'success'"));
+      expect(qrJob, contains('dart run tool/validate_template.dart'));
+      expect(
+        qrJob,
+        contains('dart run tool/validate_template.dart --release-readiness'),
+      );
+      expect(
+        qrJob,
+        contains(
+          'flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart',
+        ),
+      );
+      expect(
+        '--target test/tool/fixtures/qr_consumer/main.dart'.allMatches(qrJob),
+        hasLength(4),
+      );
+      expect(qrJob, contains('flutter build ios --simulator --no-codesign'));
+      expect(qrJob, contains('flutter build ios --release --no-codesign'));
+    },
+  );
 }

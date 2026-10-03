@@ -143,6 +143,24 @@ Face ID key. This capability is only a local OS authentication signal, not serve
 identity, crypto-key binding, or secure-storage behavior. Dart contract tests and
 native policy coverage do not replace final native/consumer CI or device evidence.
 
+### QR / Barcode
+
+`starterkit_qr_barcode` 1.0.0 is a separate optional still-image decoding
+plugin. It is not a default-app activation or dependency. Its Dart layer has no
+third-party runtime package dependency. Android's ZXing core 3.5.3 (Apache-2.0)
+is confined to the plugin; iOS uses system ImageIO and Vision. No camera,
+gallery, storage, or network permission is introduced by decoding bytes. Native
+decoder fixtures, native compilation, and source/renamed consumer linkage remain
+pending their integration CI evidence; this dependency decision is not runtime or
+artifact proof.
+
+The Dart API defaults disabled and performs no channel call or input copy while
+disabled. Explicit calls accept encoded bytes only. Registration is intended to
+be channel-only, with decoder/worker startup limited to an explicit call. The
+capability does not acquire images or provide a camera/picker; Gallery remains a
+separate product choice. Its returned text is untrusted and is neither executed
+nor used for navigation or network access.
+
 ## Optional future integrations (not implemented)
 
 Dio, cloud SDKs, Sentry, Firebase services, third-party geolocation/image-picker/

@@ -55,6 +55,86 @@ void main() {
     );
   });
 
+  group('QR capability remains opt-in', () {
+    late Directory fixture;
+    setUp(() => fixture = _createRenamedFixture(repoRoot));
+    tearDown(() => fixture.deleteSync(recursive: true));
+
+    test('rejects root direct QR dependency declarations', () async {
+      final pubspec = File('${fixture.path}/pubspec.yaml');
+      var content = pubspec.readAsStringSync();
+      content = content.replaceFirst(
+        RegExp(r'^dev_dependencies:', multiLine: true),
+        '  starterkit_qr_barcode: {path: packages/starterkit_qr_barcode}\n'
+        'dev_dependencies:',
+      );
+      pubspec.writeAsStringSync(content);
+      final result = await _runValidator(fixture.path, release: false);
+      expect(result.exitCode, isNot(0));
+      expect(
+        result.stderr,
+        contains('optional capability starterkit_qr_barcode'),
+      );
+    });
+
+    test('rejects default lib importing QR capability', () async {
+      _writeFile(
+        fixture,
+        'lib/accidental_qr.dart',
+        "import 'package:starterkit_qr_barcode/starterkit_qr_barcode.dart';\n",
+      );
+      final result = await _runValidator(fixture.path, release: false);
+      expect(result.exitCode, isNot(0));
+      expect(
+        result.stderr,
+        contains('must not import optional capability starterkit_qr_barcode'),
+      );
+    });
+
+    for (final section in ['dev_dependencies', 'dependency_overrides']) {
+      test('rejects root QR in $section', () async {
+        final pubspec = File('${fixture.path}/pubspec.yaml');
+        final content = pubspec.readAsStringSync();
+        pubspec.writeAsStringSync(
+          section == 'dev_dependencies'
+              ? content.replaceFirst(
+                  'dev_dependencies:',
+                  'dev_dependencies:\n  starterkit_qr_barcode: any',
+                )
+              : '$content\ndependency_overrides:\n  starterkit_qr_barcode: any\n',
+        );
+        final result = await _runValidator(fixture.path, release: false);
+        expect(result.exitCode, isNot(0));
+        expect(result.stderr, contains('starterkit_qr_barcode in $section'));
+      });
+    }
+
+    for (final declaration in [
+      "dependencies:\n    'starterkit_qr_barcode': any",
+      "dependencies: {'starterkit_qr_barcode': any}",
+    ]) {
+      test('rejects QR with alternate YAML layout: $declaration', () async {
+        final pubspec = File('${fixture.path}/pubspec.yaml');
+        pubspec.writeAsStringSync(
+          pubspec.readAsStringSync().replaceFirst(
+            RegExp(
+              r'^dependencies:.*?(?=^dev_dependencies:)',
+              multiLine: true,
+              dotAll: true,
+            ),
+            '$declaration\n',
+          ),
+        );
+        final result = await _runValidator(fixture.path, release: false);
+        expect(result.exitCode, isNot(0));
+        expect(
+          result.stderr,
+          contains('optional capability starterkit_qr_barcode'),
+        );
+      });
+    }
+  });
+
   test(
     'network permission in Android main manifest fails normal validation',
     () async {

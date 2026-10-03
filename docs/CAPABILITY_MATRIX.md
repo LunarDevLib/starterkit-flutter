@@ -11,7 +11,7 @@ capability.
 | Camera | Yes | Dart contract + Android policy + iOS policy + native compile gates | No | [CAMERA](capabilities/CAMERA.md) |
 | Gallery | Yes | Dart contract + Android policy + iOS policy + native compile gates | No | [GALLERY](capabilities/GALLERY.md) |
 | Location | Yes | Dart contract tests passed; native/consumer CI pending (no device PASS) | No | [LOCATION](capabilities/LOCATION.md) |
-| QR / Barcode | Planned | No | No | Planned |
+| QR / Barcode | Dart API implemented; native/consumer evidence pending | Dart contract tests; native fixtures/CI pending | No | [QR_BARCODE](capabilities/QR_BARCODE.md) |
 | Biometric | Yes | Dart contract tests + native policy coverage; native/consumer CI pending | No | [BIOMETRIC](capabilities/BIOMETRIC.md) |
 | Analytics | Planned | No | No | Planned |
 | Crash Reporting | Planned | No | No | Planned |
