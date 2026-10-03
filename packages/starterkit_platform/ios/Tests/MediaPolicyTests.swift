@@ -160,6 +160,19 @@ final class MediaPolicyTests: XCTestCase {
     }
   }
 
+  func testPNGIntegrityAcceptsCompleteFixtureAndHonorsCancellation() throws {
+    XCTAssertNoThrow(
+      try PNGIntegrity.validate(
+        pngFixture, maxBytes: pngFixture.count, maxPixels: 1, isCancelled: { false }
+      )
+    )
+    XCTAssertThrowsError(
+      try PNGIntegrity.validate(
+        pngFixture, maxBytes: pngFixture.count, maxPixels: 1, isCancelled: { true }
+      )
+    ) { XCTAssertEqual($0 as? MediaFileError, .cancelled) }
+  }
+
   func testPixelCapRejectsBeforeThumbnailDecode() throws {
     let directory = try temporaryDirectory()
     defer { try? FileManager.default.removeItem(at: directory) }

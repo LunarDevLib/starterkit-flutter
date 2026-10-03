@@ -89,7 +89,7 @@ enum MediaFilePolicy {
     try beforeCopy?()
 
     let destinationFD = destination.path.withCString {
-      open($0, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
+      open($0, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, mode_t(0o600))
     }
     guard destinationFD >= 0 else { throw MediaFileError.output }
     var keepDestination = false
@@ -162,8 +162,15 @@ enum MediaFilePolicy {
     ) else { throw MediaFileError.invalidDimensions }
     guard let type = CGImageSourceGetType(imageSource) as String?,
       CGImageSourceGetStatus(imageSource) == .statusComplete,
-      CGImageSourceGetStatusAtIndex(imageSource, 0) == .statusComplete,
-      let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+      CGImageSourceGetStatusAtIndex(imageSource, 0) == .statusComplete
+    else { throw MediaFileError.invalidImage }
+    if type == "public.png" {
+      let copiedBytes = try readBounded(fd: destinationFD, maxBytes: maxBytes, expectedBytes: total, isCancelled: isCancelled)
+      try PNGIntegrity.validate(
+        copiedBytes, maxBytes: maxBytes, maxPixels: maxPixels, isCancelled: isCancelled
+      )
+    }
+    guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(
         imageSource,
         0,
         [
@@ -198,6 +205,32 @@ enum MediaFilePolicy {
   private static func sameFile(_ lhs: stat, _ rhs: stat) -> Bool {
     lhs.st_dev == rhs.st_dev && lhs.st_ino == rhs.st_ino
       && (rhs.st_mode & S_IFMT) == S_IFREG
+  }
+
+  private static func readBounded(
+    fd: Int32, maxBytes: Int, expectedBytes: Int, isCancelled: () -> Bool
+  ) throws -> Data {
+    var contents = Data()
+    contents.reserveCapacity(expectedBytes)
+    var buffer = [UInt8](repeating: 0, count: chunkSize)
+    var total = 0
+    while true {
+      if isCancelled() { throw MediaFileError.cancelled }
+      let count = buffer.withUnsafeMutableBytes { bytes in
+        pread(fd, bytes.baseAddress!, bytes.count, off_t(total))
+      }
+      if count == 0 { break }
+      if count < 0 {
+        if errno == EINTR { continue }
+        throw MediaFileError.invalidImage
+      }
+      guard count <= maxBytes - total else { throw MediaFileError.tooLarge }
+      guard count <= expectedBytes - total else { throw MediaFileError.changed }
+      contents.append(contentsOf: buffer.prefix(count))
+      total += count
+    }
+    guard total == expectedBytes, total > 0 else { throw MediaFileError.changed }
+    return contents
   }
 
   private static func sameSnapshot(_ lhs: stat, _ rhs: stat) -> Bool {

@@ -95,6 +95,15 @@ Both paths bound result bytes and pixel count before product use and return only
 capability-owned temporary copies. No third-party camera, picker, or permission
 package is added.
 
+iOS media validation uses the SDK-provided ImageIO framework and system zlib
+(`import zlib`, permissive zlib license), classified as Optional native/system
+dependencies of this capability. No package download, vendored parser, vendor SDK,
+OS-floor change, or permission is introduced. System-library maintenance follows
+Apple OS updates. PNG container/CRC and bounded compressed-stream validation runs
+only during an explicit media operation; plugin registration does not perform
+decoding, file work, or initialize an external service. ImageIO's bounded decode
+is not a guarantee of strict malformed-file rejection for every supported codec.
+
 ## Optional future integrations (not implemented)
 
 Dio, cloud SDKs, Sentry, Firebase services, third-party geolocation/image-picker/
