@@ -16,5 +16,5 @@ integration verification.
 - Crash Reporting — planned
 - Social Login — planned
 - [Native Share](NATIVE_SHARE.md) — Dart API implemented; native/integration CI pending
-- App Update — planned
+- [App Update](APP_UPDATE.md) — Dart validation API with product-supplied ports; backend/store integration NOT RUN
 - Remote Config — planned
