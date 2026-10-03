@@ -104,6 +104,24 @@ only during an explicit media operation; plugin registration does not perform
 decoding, file work, or initialize an external service. ImageIO's bounded decode
 is not a guarantee of strict malformed-file rejection for every supported codec.
 
+### Location
+
+`starterkit_platform` also exposes an opt-in, disabled-by-default one-shot
+foreground Location capability. Plugin registration installs its channel only;
+permission lookup, prompting, lifecycle observation and location-manager work
+begin only for explicit API operations. The Dart implementation adds no package.
+Android uses framework `LocationManager`; iOS uses the optional system
+CoreLocation framework. These are native/system dependencies maintained with
+their respective OS releases, not vendor SDKs.
+
+The plugin adds no permission or usage string. Product activation owns Android
+coarse-location manifest permission and iOS `NSLocationWhenInUseUsageDescription`;
+the default starter app remains without them. Background location, an Always
+purpose string, network endpoints, persistence, and third-party geolocation or
+permission packages are not part of this capability. Source policy and Dart
+contract tests do not constitute device or remote consumer CI evidence; consumer
+CI is pending for this change.
+
 ## Optional future integrations (not implemented)
 
 Dio, cloud SDKs, Sentry, Firebase services, third-party geolocation/image-picker/

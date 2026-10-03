@@ -8,6 +8,8 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
   UIImagePickerControllerDelegate, UINavigationControllerDelegate
 {
   private var channel: FlutterMethodChannel?
+  private var locationChannel: FlutterMethodChannel?
+  private var locationAdapter: IOSLocationAdapter?
   private var pending: PendingOperation?
   private var galleryDelegate: AnyObject?
   private var engineAttached = true
@@ -20,6 +22,23 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     )
     instance.channel = channel
     registrar.addMethodCallDelegate(instance, channel: channel)
+    let locationChannel = FlutterMethodChannel(
+      name: "starterkit/platform/location",
+      binaryMessenger: registrar.messenger()
+    )
+    instance.locationChannel = locationChannel
+    instance.locationAdapter = IOSLocationAdapter()
+    locationChannel.setMethodCallHandler { [weak instance] call, result in
+      guard let instance, instance.engineAttached, let adapter = instance.locationAdapter else {
+        result(
+          LocationPolicy.detachedResponse(
+            method: call.method, arguments: call.arguments as? [String: Any]
+          ) ?? FlutterMethodNotImplemented
+        )
+        return
+      }
+      adapter.handle(call, result: result)
+    }
     // Flutter only sends detachFromEngine to published plugin instances.
     registrar.publish(instance)
   }
@@ -64,6 +83,11 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
       return
     }
     engineAttached = false
+    locationChannel?.setMethodCallHandler(nil)
+    locationChannel = nil
+    let detachedLocationAdapter = locationAdapter
+    locationAdapter = nil
+    detachedLocationAdapter?.detach()
     let operation = pending
     pending = nil
     galleryDelegate = nil
