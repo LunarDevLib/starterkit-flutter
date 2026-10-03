@@ -16,6 +16,7 @@ let package = Package(
         "IOSLocationAdapter.swift",
         "IOSBiometricAdapter.swift",
         "IOSNativeShareAdapter.swift",
+        "IOSPushAdapter.swift",
       ]
     ),
     .testTarget(
