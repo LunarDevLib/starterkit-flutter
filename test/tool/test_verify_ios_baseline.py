@@ -7,6 +7,8 @@ from pathlib import Path
 
 from tool.verify_ios_baseline import (
     BaselineError,
+    FLUTTER_DEBUG_BONJOUR_SERVICES,
+    FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
     main,
     resolve_runner_bundle_id,
     verify_plist,
@@ -176,6 +178,107 @@ class VerifyIOSBaselineTest(unittest.TestCase):
         )
         self.assertEqual(verify_plist(self.path), "15.0")
 
+    def test_debug_accepts_only_exact_flutter_metadata_in_xml_and_binary(self):
+        metadata = {
+            "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+            "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+        }
+        for fmt in (plistlib.FMT_XML, plistlib.FMT_BINARY):
+            with self.subTest(fmt=fmt):
+                self.write_plist({**BASELINE, **metadata}, fmt=fmt)
+                self.assertIsNone(verify_plist(self.path, variant="debug"))
+
+        self.write_plist(BASELINE)
+        self.assertIsNone(verify_plist(self.path, variant="debug"))
+
+    def test_release_rejects_exact_flutter_debug_metadata(self):
+        self.write_plist(
+            {
+                **BASELINE,
+                "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+            }
+        )
+        with self.assertRaisesRegex(BaselineError, "NSBonjourServices|NSLocalNetwork"):
+            verify_plist(self.path, variant="release")
+
+    def test_cli_selects_debug_variant_explicitly(self):
+        self.write_plist(
+            {
+                **BASELINE,
+                "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+            }
+        )
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            result = main(["--plist", str(self.path), "--variant", "debug"])
+        self.assertEqual(result, 0)
+        self.assertIn("baseline (debug)", stdout.getvalue())
+
+    def test_debug_rejects_incomplete_or_nonexact_flutter_metadata(self):
+        invalid_pairs = (
+            {"NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES},
+            {"NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION},
+            {
+                "NSBonjourServices": ["_dartVmService._tcp", "_dartVmService._tcp"],
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+            },
+            {
+                "NSBonjourServices": ["_dartVmService._tcp", "_extra._tcp"],
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+            },
+            {
+                "NSBonjourServices": "_dartVmService._tcp",
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+            },
+            {
+                "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                "NSLocalNetworkUsageDescription": "Custom purpose string",
+            },
+            {
+                "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                "NSLocalNetworkUsageDescription": [FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION],
+            },
+        )
+        for pair in invalid_pairs:
+            with self.subTest(pair=pair):
+                self.write_plist({**BASELINE, **pair})
+                with self.assertRaises(BaselineError):
+                    verify_plist(self.path, variant="debug")
+
+    def test_debug_exact_root_pair_does_not_whitelist_nested_metadata(self):
+        self.write_plist(
+            {
+                **BASELINE,
+                "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+                "Nested": {
+                    "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                    "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+                },
+            }
+        )
+        with self.assertRaisesRegex(BaselineError, "Nested.NSBonjourServices"):
+            verify_plist(self.path, variant="debug")
+
+    def test_debug_exact_root_pair_still_rejects_other_privacy_permissions(self):
+        self.write_plist(
+            {
+                **BASELINE,
+                "NSBonjourServices": FLUTTER_DEBUG_BONJOUR_SERVICES,
+                "NSLocalNetworkUsageDescription": FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION,
+                "NSCameraUsageDescription": "camera",
+            }
+        )
+        with self.assertRaisesRegex(BaselineError, "NSCameraUsageDescription"):
+            verify_plist(self.path, variant="debug")
+
+    def test_rejects_unknown_variant(self):
+        self.write_plist(BASELINE)
+        with self.assertRaisesRegex(BaselineError, "variant must be"):
+            verify_plist(self.path, variant="profile")
+
     def test_minimum_os_version_is_informational(self):
         self.write_plist({**BASELINE, "MinimumOSVersion": "12.0"})
         self.assertEqual(verify_plist(self.path), "12.0")
@@ -204,6 +307,7 @@ class VerifyIOSBaselineTest(unittest.TestCase):
             "NSLocationTemporaryUsageDescriptionDictionary",
             "NSFaceIDUsageDescription",
             "NSUserTrackingUsageDescription",
+            "NSBonjourServices",
             "UIBackgroundModes",
             "NSAppTransportSecurity",
         )

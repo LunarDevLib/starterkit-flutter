@@ -130,12 +130,6 @@ void main() {
   test('macOS runs full source/renamed checks before unsigned iOS builds', () {
     expect(source, contains('runs-on: macos-latest'));
     expect(
-      source,
-      contains(
-        "if: \${{ always() && !cancelled() && needs.verify.outputs.is_template != '' }}",
-      ),
-    );
-    expect(
       'swift test --package-path packages/starterkit_preferences/ios'
           .allMatches(source)
           .length,
@@ -179,6 +173,83 @@ void main() {
     expect(
       source.indexOf('flutter test --exclude-tags template-only', renamedStart),
       lessThan(renamedBuild),
+    );
+  });
+
+  test('Swift policy is an independent fast gate for iOS CI', () {
+    expect(source, contains('  push:\n    branches: [main]'));
+    expect(source, contains('  pull_request:\n  workflow_dispatch:'));
+
+    final swiftStart = source.indexOf('  swift-policy:');
+    final iosStart = source.indexOf('  ios-simulator:');
+    expect(swiftStart, isNonNegative);
+    expect(iosStart, greaterThan(swiftStart));
+    final swiftJob = source.substring(swiftStart, iosStart);
+    for (final package in [
+      'starterkit_preferences',
+      'starterkit_webview',
+      'starterkit_platform',
+    ]) {
+      expect(
+        swiftJob,
+        contains('swift test --package-path packages/$package/ios'),
+      );
+    }
+    expect(swiftJob, contains('runs-on: macos-latest'));
+    expect(swiftJob, contains('actions/checkout@v4'));
+    expect(swiftJob, isNot(contains('needs:')));
+    expect(swiftJob, isNot(contains('flutter')));
+
+    final iosJob = source.substring(iosStart);
+    expect(iosJob, contains('needs: [verify, swift-policy]'));
+    expect(
+      iosJob,
+      contains(
+        "needs.verify.outputs.is_template != '' && needs.swift-policy.result == 'success'",
+      ),
+    );
+    expect(iosJob, contains('Bootstrap fresh copy and iOS simulator build'));
+    expect(iosJob, contains('flutter build ios --simulator --no-codesign'));
+    expect(iosJob, contains('ios-built-plists-source'));
+    expect(iosJob, contains('ios-built-plists-renamed'));
+
+    final sourceStart = iosJob.indexOf(
+      'name: Validate source and compile iOS targets',
+    );
+    final renamedStart = iosJob.indexOf(
+      'name: Bootstrap fresh copy and iOS simulator build',
+    );
+    expect(sourceStart, isNonNegative);
+    expect(renamedStart, greaterThan(sourceStart));
+    final sourceChecks = iosJob.substring(sourceStart, renamedStart);
+    final renamedChecks = iosJob.substring(renamedStart);
+    final renamedBuild = renamedChecks.indexOf(
+      'flutter build ios --simulator --no-codesign',
+    );
+    expect(renamedBuild, isNonNegative);
+    for (final package in [
+      'starterkit_preferences',
+      'starterkit_webview',
+      'starterkit_platform',
+    ]) {
+      final command = 'swift test --package-path packages/$package/ios';
+      expect(sourceChecks, isNot(contains(command)));
+      expect(command.allMatches(renamedChecks), hasLength(1));
+      expect(renamedChecks.indexOf(command), lessThan(renamedBuild));
+    }
+
+    final iosBaselineCommands = iosJob
+        .split('\n')
+        .where((line) => line.contains('python3 tool/verify_ios_baseline.py'))
+        .toList();
+    expect(iosBaselineCommands, hasLength(4));
+    expect(
+      iosBaselineCommands.where((line) => line.contains('--variant debug')),
+      hasLength(2),
+    );
+    expect(
+      iosBaselineCommands.where((line) => line.contains('--variant release')),
+      hasLength(2),
     );
   });
 

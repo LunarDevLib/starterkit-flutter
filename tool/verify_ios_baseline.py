@@ -25,6 +25,11 @@ FORBIDDEN_KEYS = {
     "NSAppTransportSecurity",
     "NSBonjourServices",
 }
+FLUTTER_DEBUG_BONJOUR_SERVICES = ["_dartVmService._tcp"]
+FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION = (
+    "Allow Flutter tools on your computer to connect and debug your application. "
+    "This prompt will not appear on release builds."
+)
 
 
 def _is_forbidden_key(key: Any) -> bool:
@@ -141,8 +146,11 @@ def verify_plist(
     path: Path,
     expected_bundle_id: str | None = None,
     expected_minimum_os_version: str | None = None,
+    variant: str = "release",
 ) -> str | None:
     """Verify an XML or binary plist and return its minimum OS version."""
+    if variant not in ("debug", "release"):
+        raise BaselineError("variant must be 'debug' or 'release'")
     if not path.is_file():
         raise BaselineError(f"plist does not exist or is not a file: {path}")
     try:
@@ -168,7 +176,36 @@ def verify_plist(
                 f"{expected_bundle_id!r}, found {actual_bundle_id!r}"
             )
 
-    forbidden = _find_forbidden_keys(info)
+    checked_info = info
+    if variant == "debug":
+        has_bonjour = "NSBonjourServices" in info
+        has_local_network = "NSLocalNetworkUsageDescription" in info
+        if has_bonjour != has_local_network:
+            raise BaselineError(
+                "Flutter debug local-network metadata must include both NSBonjourServices "
+                "and NSLocalNetworkUsageDescription"
+            )
+        if has_bonjour:
+            services = info["NSBonjourServices"]
+            description = info["NSLocalNetworkUsageDescription"]
+            if type(services) is not list or services != FLUTTER_DEBUG_BONJOUR_SERVICES:
+                raise BaselineError(
+                    "debug NSBonjourServices must equal the exact Flutter VM service list "
+                    f"{FLUTTER_DEBUG_BONJOUR_SERVICES!r}"
+                )
+            if (
+                type(description) is not str
+                or description != FLUTTER_DEBUG_LOCAL_NETWORK_DESCRIPTION
+            ):
+                raise BaselineError(
+                    "debug NSLocalNetworkUsageDescription must equal the exact frozen "
+                    "Flutter SDK description"
+                )
+            checked_info = info.copy()
+            checked_info.pop("NSBonjourServices")
+            checked_info.pop("NSLocalNetworkUsageDescription")
+
+    forbidden = _find_forbidden_keys(checked_info)
     if forbidden:
         raise BaselineError(f"activation-only plist keys are not allowed: {', '.join(forbidden)}")
 
@@ -199,6 +236,10 @@ def main(argv: list[str] | None = None) -> int:
         "--minimum-os-version",
         help="require this exact numeric MinimumOSVersion (otherwise informational only)",
     )
+    parser.add_argument(
+        "--variant", choices=("debug", "release"), default="release",
+        help="built app variant (default: release)",
+    )
     args = parser.parse_args(argv)
     try:
         expected_bundle_id = args.bundle_id
@@ -211,14 +252,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             expected_bundle_id = project_bundle_id
         minimum_os = verify_plist(
-            args.plist, expected_bundle_id, args.minimum_os_version
+            args.plist, expected_bundle_id, args.minimum_os_version, args.variant
         )
     except BaselineError as error:
         print(f"iOS baseline verification failed: {error}", file=sys.stderr)
         return 1
 
-    print(f"Verified iOS Info.plist baseline: {args.plist}")
-    print("Activation-only usage strings, background modes, ATS, and Bonjour settings: (none)")
+    print(f"Verified iOS Info.plist baseline ({args.variant}): {args.plist}")
+    if args.variant == "debug":
+        print("Flutter VM debugger local-network metadata: exact pair or both absent")
+    else:
+        print("Flutter VM debugger local-network metadata: not permitted")
+    print("Other activation-only usage strings, background modes, and ATS settings: (none)")
     if args.minimum_os_version is None:
         print(f"MinimumOSVersion (informational only): {minimum_os or '(not set)'}")
     else:

@@ -2,7 +2,9 @@ name: Flutter
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -358,10 +360,21 @@ jobs:
           python3 tool/verify_android_baseline.py
           --apk build/app/outputs/flutter-apk/app-release.apk --variant release
 
+  swift-policy:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test preferences Swift package
+        run: swift test --package-path packages/starterkit_preferences/ios
+      - name: Test WebView Swift package
+        run: swift test --package-path packages/starterkit_webview/ios
+      - name: Test platform Swift package
+        run: swift test --package-path packages/starterkit_platform/ios
+
   ios-simulator:
     runs-on: macos-latest
-    needs: verify
-    if: ${{ always() && !cancelled() && needs.verify.outputs.is_template != '' }}
+    needs: [verify, swift-policy]
+    if: ${{ always() && !cancelled() && needs.verify.outputs.is_template != '' && needs.swift-policy.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -389,9 +402,6 @@ jobs:
             flutter test --exclude-tags template-only
           fi
           python3 -m unittest discover -s test/tool -p 'test_*.py'
-          swift test --package-path packages/starterkit_preferences/ios
-          swift test --package-path packages/starterkit_webview/ios
-          swift test --package-path packages/starterkit_platform/ios
           source_bundle_id_assertion=()
           if [ "$IS_TEMPLATE" = "true" ]; then
             source_bundle_id_assertion=(--bundle-id com.example.flutterstarterkit)
@@ -400,10 +410,10 @@ jobs:
           mkdir -p build/ci-ios-diagnostics
           cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-ios-diagnostics/source-simulator-Info.plist
           ios_verification_failed=0
-          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 --variant debug "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
           flutter build ios --release --no-codesign
           cp build/ios/iphoneos/Runner.app/Info.plist build/ci-ios-diagnostics/source-release-Info.plist
-          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 --variant release "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
           [ "$ios_verification_failed" -eq 0 ]
       - name: Upload source iOS built Info.plist evidence
         if: always()
@@ -439,10 +449,10 @@ jobs:
           mkdir -p build/ci-ios-diagnostics
           cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-ios-diagnostics/renamed-simulator-Info.plist
           ios_verification_failed=0
-          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 || ios_verification_failed=1
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant debug || ios_verification_failed=1
           flutter build ios --release --no-codesign
           cp build/ios/iphoneos/Runner.app/Info.plist build/ci-ios-diagnostics/renamed-release-Info.plist
-          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 || ios_verification_failed=1
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant release || ios_verification_failed=1
           [ "$ios_verification_failed" -eq 0 ]
       - name: Upload renamed iOS built Info.plist evidence
         if: always()
