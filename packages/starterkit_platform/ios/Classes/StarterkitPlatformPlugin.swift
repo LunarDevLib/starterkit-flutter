@@ -14,6 +14,8 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
   private var biometricAdapter: IOSBiometricAdapter?
   private var shareChannel: FlutterMethodChannel?
   private var shareAdapter: IOSNativeShareAdapter?
+  private var pushChannel: FlutterMethodChannel?
+  private var pushAdapter: IOSPushAdapter?
   private var pending: PendingOperation?
   private var galleryDelegate: AnyObject?
   private var engineAttached = true
@@ -77,6 +79,26 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
       }
       adapter.handle(call, result: result)
     }
+    let pushChannel = FlutterMethodChannel(
+      name: "starterkit/platform/push",
+      binaryMessenger: registrar.messenger()
+    )
+    instance.pushChannel = pushChannel
+    instance.pushAdapter = IOSPushAdapter()
+    pushChannel.setMethodCallHandler { [weak instance] call, result in
+      guard let instance, instance.engineAttached, let adapter = instance.pushAdapter else {
+        let reply = {
+          if PushPolicy.supports(call.method) {
+            result(PushPermissionOutcome.engineDetached.wire)
+          } else {
+            result(FlutterMethodNotImplemented)
+          }
+        }
+        if Thread.isMainThread { reply() } else { DispatchQueue.main.async(execute: reply) }
+        return
+      }
+      adapter.handle(call, result: result)
+    }
     // Flutter only sends detachFromEngine to published plugin instances.
     registrar.publish(instance)
   }
@@ -136,6 +158,11 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     let detachedShareAdapter = shareAdapter
     shareAdapter = nil
     detachedShareAdapter?.detach()
+    pushChannel?.setMethodCallHandler(nil)
+    pushChannel = nil
+    let detachedPushAdapter = pushAdapter
+    pushAdapter = nil
+    detachedPushAdapter?.detach()
     let operation = pending
     pending = nil
     galleryDelegate = nil

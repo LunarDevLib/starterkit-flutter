@@ -6,7 +6,7 @@ platform configuration, composition, UI/navigation, permission/consent, and
 integration verification.
 
 - [WebView](WEBVIEW.md) — implemented
-- Push — planned
+- [Push](PUSH.md) — Dart facade/provider port implemented; native/integration CI pending
 - [Camera](CAMERA.md) — implemented
 - [Gallery](GALLERY.md) — implemented
 - Location — planned
