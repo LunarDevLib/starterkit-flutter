@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 
 export 'location.dart';
 export 'biometric.dart';
+export 'native_share.dart';
 
 const MethodChannel _mediaChannel = MethodChannel('starterkit/platform/media');
 

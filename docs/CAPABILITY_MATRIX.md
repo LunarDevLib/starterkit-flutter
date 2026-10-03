@@ -16,7 +16,7 @@ capability.
 | Analytics | Planned | No | No | Planned |
 | Crash Reporting | Planned | No | No | Planned |
 | Social Login | Planned | No | No | Planned |
-| Native Share | Planned | No | No | Planned |
+| Native Share | Dart API implemented; native/integration CI pending | 13 Dart share tests + 40 existing platform tests passed; device/UI NOT_RUN | No | [NATIVE_SHARE](capabilities/NATIVE_SHARE.md) |
 | App Update | Planned | No | No | Planned |
 | Remote Config | Planned | No | No | Planned |
 

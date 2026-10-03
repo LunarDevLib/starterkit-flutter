@@ -15,6 +15,6 @@ integration verification.
 - Analytics — planned
 - Crash Reporting — planned
 - Social Login — planned
-- Native Share — planned
+- [Native Share](NATIVE_SHARE.md) — Dart API implemented; native/integration CI pending
 - App Update — planned
 - Remote Config — planned

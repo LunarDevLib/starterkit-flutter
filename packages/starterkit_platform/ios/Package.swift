@@ -15,6 +15,7 @@ let package = Package(
         "StarterkitPlatformPlugin.swift",
         "IOSLocationAdapter.swift",
         "IOSBiometricAdapter.swift",
+        "IOSNativeShareAdapter.swift",
       ]
     ),
     .testTarget(
