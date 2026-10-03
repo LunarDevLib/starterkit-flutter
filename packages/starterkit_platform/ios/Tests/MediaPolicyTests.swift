@@ -198,7 +198,7 @@ final class MediaPolicyTests: XCTestCase {
             try handle.write(contentsOf: changedBytes)
             // Make same-length mutation deterministic on filesystems with coarse timestamps.
             try FileManager.default.setAttributes(
-              [.modificationDate: Date(timeIntervalSinceNow: 60)], atPath: source.path
+              [.modificationDate: Date(timeIntervalSinceNow: 60)], ofItemAtPath: source.path
             )
           }
         )
