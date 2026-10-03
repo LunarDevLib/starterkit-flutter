@@ -12,6 +12,8 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
   private var locationAdapter: IOSLocationAdapter?
   private var biometricChannel: FlutterMethodChannel?
   private var biometricAdapter: IOSBiometricAdapter?
+  private var shareChannel: FlutterMethodChannel?
+  private var shareAdapter: IOSNativeShareAdapter?
   private var pending: PendingOperation?
   private var galleryDelegate: AnyObject?
   private var engineAttached = true
@@ -54,6 +56,23 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
             method: call.method, arguments: call.arguments as? [String: Any]
           ) ?? FlutterMethodNotImplemented
         )
+        return
+      }
+      adapter.handle(call, result: result)
+    }
+    let shareChannel = FlutterMethodChannel(
+      name: "starterkit/platform/share",
+      binaryMessenger: registrar.messenger()
+    )
+    instance.shareChannel = shareChannel
+    instance.shareAdapter = IOSNativeShareAdapter(host: registrar.viewController)
+    shareChannel.setMethodCallHandler { [weak instance] call, result in
+      guard let instance, instance.engineAttached, let adapter = instance.shareAdapter else {
+        if call.method == "share" {
+          result(ShareOutcome.engineDetached.wire)
+        } else {
+          result(FlutterMethodNotImplemented)
+        }
         return
       }
       adapter.handle(call, result: result)
@@ -112,6 +131,11 @@ public final class StarterkitPlatformPlugin: NSObject, FlutterPlugin,
     let detachedBiometricAdapter = biometricAdapter
     biometricAdapter = nil
     detachedBiometricAdapter?.detach()
+    shareChannel?.setMethodCallHandler(nil)
+    shareChannel = nil
+    let detachedShareAdapter = shareAdapter
+    shareAdapter = nil
+    detachedShareAdapter?.detach()
     let operation = pending
     pending = nil
     galleryDelegate = nil

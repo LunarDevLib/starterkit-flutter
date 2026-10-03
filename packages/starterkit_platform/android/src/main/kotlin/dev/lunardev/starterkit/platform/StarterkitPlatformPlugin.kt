@@ -34,8 +34,10 @@ class StarterkitPlatformPlugin :
     private lateinit var channel: MethodChannel
     private lateinit var locationChannel: MethodChannel
     private lateinit var biometricChannel: MethodChannel
+    private lateinit var shareChannel: MethodChannel
     private lateinit var locationHandler: AndroidLocationHandler
     private lateinit var biometricHandler: AndroidBiometricHandler
+    private lateinit var shareHandler: AndroidNativeShareHandler
     private var activityBinding: ActivityPluginBinding? = null
     private var pending: PendingOperation? = null
     private var activityResultListenerRegistered = false
@@ -52,11 +54,16 @@ class StarterkitPlatformPlugin :
         biometricHandler = AndroidBiometricHandler(context, main)
         biometricChannel = MethodChannel(binding.binaryMessenger, BIOMETRIC_CHANNEL)
         biometricChannel.setMethodCallHandler(biometricHandler)
+        shareHandler = AndroidNativeShareHandler(context, main)
+        shareChannel = MethodChannel(binding.binaryMessenger, SHARE_CHANNEL)
+        shareChannel.setMethodCallHandler(shareHandler)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         biometricHandler.onEngineDetached()
         biometricChannel.setMethodCallHandler(null)
+        shareHandler.onEngineDetached()
+        shareChannel.setMethodCallHandler(null)
         locationHandler.onEngineDetached()
         locationChannel.setMethodCallHandler(null)
         settlePending(mediaOutcome("failure", "media.engine_detached"), deleteFile = true)
@@ -69,6 +76,7 @@ class StarterkitPlatformPlugin :
         activityBinding = binding
         locationHandler.onAttachedToActivity(binding)
         biometricHandler.onAttachedToActivity(binding)
+        shareHandler.onAttachedToActivity(binding)
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
@@ -84,6 +92,7 @@ class StarterkitPlatformPlugin :
     }
 
     private fun detachActivity() {
+        shareHandler.onActivityDetached()
         biometricHandler.onActivityDetached()
         locationHandler.onActivityDetached()
         if (activityResultListenerRegistered) {
@@ -442,5 +451,6 @@ class StarterkitPlatformPlugin :
         private const val CHANNEL = "starterkit/platform/media"
         private const val LOCATION_CHANNEL = "starterkit/platform/location"
         private const val BIOMETRIC_CHANNEL = "starterkit/platform/biometric"
+        private const val SHARE_CHANNEL = "starterkit/platform/share"
     }
 }
