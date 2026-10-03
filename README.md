@@ -105,5 +105,11 @@ to add the Android `INTERNET` permission; the Starter Kit baseline does not add
 it. Bridge support is disabled by default and, when enabled, validates the trusted
 HTTPS source origin and main-frame status at the native WebView boundary.
 
+Camera and Gallery are implemented in the project-owned `starterkit_platform`
+plugin. Camera capture and gallery selection happen only after an explicit method
+call; the baseline declares no camera, photo-library, or storage permission.
+Returned images are bounded by byte/pixel limits and copied into capability-owned
+temporary storage.
+
 See [Capability Matrix](docs/CAPABILITY_MATRIX.md) and
 [WebView capability](docs/capabilities/WEBVIEW.md).

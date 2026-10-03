@@ -2,7 +2,9 @@ name: Flutter
 
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -35,6 +37,9 @@ jobs:
       - name: Resolve locked WebView capability package
         working-directory: packages/starterkit_webview
         run: flutter pub get --enforce-lockfile
+      - name: Resolve locked platform capability package
+        working-directory: packages/starterkit_platform
+        run: flutter pub get --enforce-lockfile
       - run: flutter gen-l10n
       - run: dart run tool/validate_template.dart
       - run: >-
@@ -42,7 +47,8 @@ jobs:
           lib test tool packages/starterkit_connectivity/lib
           packages/starterkit_connectivity/test packages/starterkit_preferences/lib
           packages/starterkit_preferences/test packages/starterkit_webview/lib
-          packages/starterkit_webview/test
+          packages/starterkit_webview/test packages/starterkit_platform/lib
+          packages/starterkit_platform/test
       - run: flutter analyze
       - name: Analyze connectivity package
         working-directory: packages/starterkit_connectivity
@@ -62,7 +68,13 @@ jobs:
       - name: Test WebView capability package
         working-directory: packages/starterkit_webview
         run: flutter test --no-pub
-      - name: Test Android manifest verifier fixtures
+      - name: Analyze platform capability package
+        working-directory: packages/starterkit_platform
+        run: flutter analyze --no-pub
+      - name: Test platform capability package
+        working-directory: packages/starterkit_platform
+        run: flutter test --no-pub
+      - name: Test Android and iOS baseline verifier fixtures
         run: python3 -m unittest discover -s test/tool -p 'test_*.py'
       - name: Test template or consuming product
         env:
@@ -82,6 +94,9 @@ jobs:
       - name: Run WebView Android unit tests
         if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
         run: ./android/gradlew --project-dir android :starterkit_webview:testDebugUnitTest
+      - name: Run platform Android unit tests
+        if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
+        run: ./android/gradlew --project-dir android :starterkit_platform:testDebugUnitTest
       - name: Capture Android runtime dependency graphs
         id: android-dependency-graphs
         if: ${{ always() && !cancelled() && steps.android-debug-apk.outcome == 'success' }}
@@ -225,7 +240,7 @@ jobs:
           flutter pub get --enforce-lockfile
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
           flutter analyze
           # Bootstrap tests assume the unrenamed template fixtures; exclude them from the renamed copy.
           flutter test --exclude-tags template-only
@@ -233,6 +248,7 @@ jobs:
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
       - name: Build renamed Android debug APK
         id: renamed-android-debug-apk
         if: ${{ success() }}
@@ -246,6 +262,10 @@ jobs:
         if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
         working-directory: ${{ runner.temp }}/renamed-copy
         run: ./android/gradlew --project-dir android :starterkit_webview:testDebugUnitTest
+      - name: Run renamed platform Android unit tests
+        if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: ./android/gradlew --project-dir android :starterkit_platform:testDebugUnitTest
       - name: Capture renamed Android runtime dependency graphs
         id: android-dependency-graphs
         if: ${{ always() && !cancelled() && steps.renamed-android-debug-apk.outcome == 'success' }}
@@ -340,10 +360,21 @@ jobs:
           python3 tool/verify_android_baseline.py
           --apk build/app/outputs/flutter-apk/app-release.apk --variant release
 
+  swift-policy:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test preferences Swift package
+        run: swift test --package-path packages/starterkit_preferences/ios
+      - name: Test WebView Swift package
+        run: swift test --package-path packages/starterkit_webview/ios
+      - name: Test platform Swift package
+        run: swift test --package-path packages/starterkit_platform/ios
+
   ios-simulator:
     runs-on: macos-latest
-    needs: verify
-    if: ${{ always() && !cancelled() && needs.verify.outputs.is_template != '' }}
+    needs: [verify, swift-policy]
+    if: ${{ always() && !cancelled() && needs.verify.outputs.is_template != '' && needs.swift-policy.result == 'success' }}
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -360,9 +391,10 @@ jobs:
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
           flutter analyze
           if [ "$IS_TEMPLATE" = "true" ]; then
             flutter test
@@ -370,10 +402,27 @@ jobs:
             flutter test --exclude-tags template-only
           fi
           python3 -m unittest discover -s test/tool -p 'test_*.py'
-          swift test --package-path packages/starterkit_preferences/ios
-          swift test --package-path packages/starterkit_webview/ios
+          source_bundle_id_assertion=()
+          if [ "$IS_TEMPLATE" = "true" ]; then
+            source_bundle_id_assertion=(--bundle-id com.example.flutterstarterkit)
+          fi
           flutter build ios --simulator --no-codesign
+          mkdir -p build/ci-ios-diagnostics
+          cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-ios-diagnostics/source-simulator-Info.plist
+          ios_verification_failed=0
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 --variant debug "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
           flutter build ios --release --no-codesign
+          cp build/ios/iphoneos/Runner.app/Info.plist build/ci-ios-diagnostics/source-release-Info.plist
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 --variant release "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
+          [ "$ios_verification_failed" -eq 0 ]
+      - name: Upload source iOS built Info.plist evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-built-plists-source
+          path: build/ci-ios-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Bootstrap fresh copy and iOS simulator build
         if: ${{ always() && !cancelled() && needs.verify.outputs.is_template == 'true' }}
         run: |
@@ -386,13 +435,30 @@ jobs:
           (cd packages/starterkit_connectivity && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
           flutter analyze
           flutter test --exclude-tags template-only
           python3 -m unittest discover -s test/tool -p 'test_*.py'
           swift test --package-path packages/starterkit_preferences/ios
           swift test --package-path packages/starterkit_webview/ios
+          swift test --package-path packages/starterkit_platform/ios
           flutter build ios --simulator --no-codesign
+          mkdir -p build/ci-ios-diagnostics
+          cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-ios-diagnostics/renamed-simulator-Info.plist
+          ios_verification_failed=0
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant debug || ios_verification_failed=1
           flutter build ios --release --no-codesign
+          cp build/ios/iphoneos/Runner.app/Info.plist build/ci-ios-diagnostics/renamed-release-Info.plist
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant release || ios_verification_failed=1
+          [ "$ios_verification_failed" -eq 0 ]
+      - name: Upload renamed iOS built Info.plist evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-built-plists-renamed
+          path: ${{ runner.temp }}/ios-renamed-copy/build/ci-ios-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7

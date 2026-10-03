@@ -78,10 +78,15 @@ void main(List<String> args) {
   }
   for (final file in _dartSources(root, 'lib')) {
     final content = file.readAsStringSync();
-    if (content.contains('package:starterkit_webview/')) {
-      failures.add(
-        'default app must not import the optional starterkit_webview capability: ${_relative(root, file)}',
-      );
+    for (final optionalPackage in const [
+      'starterkit_webview',
+      'starterkit_platform',
+    ]) {
+      if (content.contains('package:$optionalPackage/')) {
+        failures.add(
+          'default app must not import optional capability $optionalPackage: ${_relative(root, file)}',
+        );
+      }
     }
   }
   final pubspec = File('${root.path}/pubspec.yaml').readAsStringSync();

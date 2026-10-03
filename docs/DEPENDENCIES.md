@@ -77,10 +77,37 @@ Remote WebView content is not functional on the Android baseline until a consumi
 product deliberately adds `android.permission.INTERNET`. The capability itself
 declares no platform permission.
 
+### Camera / Gallery
+
+`starterkit_platform` 1.0.0 is a project-owned local Flutter plugin. Its
+registration installs one method channel and keeps all media work dormant until
+an explicit capability call. The plugin manifest declares no permission.
+
+Android Camera uses an external camera intent with an activation-only, product-owned
+FileProvider authority and private cache output. Gallery uses the system Photo
+Picker on API 33+ or `ACTION_OPEN_DOCUMENT` below it; neither path requires broad
+storage permission. iOS Camera uses AVFoundation authorization plus
+`UIImagePickerController` and therefore requires a product-supplied
+`NSCameraUsageDescription` only when activated. iOS Gallery uses `PHPicker` on
+iOS 14+ and does not require broad Photos authorization.
+
+Both paths bound result bytes and pixel count before product use and return only
+capability-owned temporary copies. No third-party camera, picker, or permission
+package is added.
+
+iOS media validation uses the SDK-provided ImageIO framework and system zlib
+(`import zlib`, permissive zlib license), classified as Optional native/system
+dependencies of this capability. No package download, vendored parser, vendor SDK,
+OS-floor change, or permission is introduced. System-library maintenance follows
+Apple OS updates. PNG container/CRC and bounded compressed-stream validation runs
+only during an explicit media operation; plugin registration does not perform
+decoding, file work, or initialize an external service. ImageIO's bounded decode
+is not a guarantee of strict malformed-file rejection for every supported codec.
+
 ## Optional future integrations (not implemented)
 
-Dio, cloud SDKs, Sentry, Firebase services, geolocation, image picker, camera, and
-biometric packages are not included or configured. They require separate
+Dio, cloud SDKs, Sentry, Firebase services, third-party geolocation/image-picker/
+camera packages, and biometric packages are not included or configured. They require separate
 capability-specific approval, platform/permission review, and tests.
 
 `connectivity_plus` was explicitly rejected for this Core set: in
@@ -99,10 +126,11 @@ They do not enable runtime integrations.
 
 ## Forbidden by default
 
-Firebase, Sentry, WebView, geolocation, image picker, camera,
+Firebase, Sentry, generic WebView, third-party geolocation/image-picker/camera,
 `permission_handler`, and Firebase messaging dependencies remain forbidden by
-the template validator until their deliberate capability integration is
-approved. The merged Android manifest has one app-defined,
+the template validator. Project-owned `starterkit_webview` and
+`starterkit_platform` are reviewed capability packages and remain disconnected
+from the default app. The merged Android manifest has one app-defined,
 signature-protected dynamic-receiver IPC guard, validated against the actual
 manifest package by the APK baseline gate. This is not a hardware or
 personal-data platform permission and does not activate an optional capability.

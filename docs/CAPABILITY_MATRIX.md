@@ -8,8 +8,8 @@ capability.
 | --- | --- | --- | --- | --- |
 | WebView | Yes | Dart policy + Android policy + iOS policy + native compile gates | No | [WEBVIEW](capabilities/WEBVIEW.md) |
 | Push | Planned | No | No | Planned |
-| Camera | Planned | No | No | Planned |
-| Gallery | Planned | No | No | Planned |
+| Camera | Yes | Dart contract + Android policy + iOS policy + native compile gates | No | [CAMERA](capabilities/CAMERA.md) |
+| Gallery | Yes | Dart contract + Android policy + iOS policy + native compile gates | No | [GALLERY](capabilities/GALLERY.md) |
 | Location | Planned | No | No | Planned |
 | QR / Barcode | Planned | No | No | Planned |
 | Biometric | Planned | No | No | Planned |

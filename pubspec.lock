@@ -600,6 +600,13 @@ packages:
       relative: true
     source: path
     version: "1.0.0"
+  starterkit_platform:
+    dependency: "direct main"
+    description:
+      path: "packages/starterkit_platform"
+      relative: true
+    source: path
+    version: "1.0.0"
   starterkit_webview:
     dependency: "direct main"
     description:

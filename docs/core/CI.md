@@ -1,5 +1,12 @@
 # Core package and native CI evidence
 
+Full CI runs for pull requests and pushes to `main`; feature-branch pushes do
+not duplicate the PR run. Manual dispatch is available before opening a PR.
+The independent `swift-policy` macOS job tests preferences, WebView, and platform
+policies immediately, without waiting for Flutter setup or Android checks.
+Its success is required before the full iOS build lane starts. Renamed-copy Swift
+tests remain in the iOS lane to verify the bootstrapped consumer separately.
+
 CI pins Flutter 3.47.4. The source and fresh renamed-copy lanes resolve the root
 lockfile with `flutter pub get --enforce-lockfile` and independently resolve,
 analyze, and test the local `starterkit_connectivity` and
@@ -18,14 +25,33 @@ CI does not install SDK tools or alter global SDK configuration; a missing SDK
 tool or unreadable APK manifest fails the gate instead of producing a static
 success claim.
 
+The macOS source and renamed-copy lanes also verify the actual built iOS
+simulator and unsigned release `Runner.app/Info.plist` files with
+`tool/verify_ios_baseline.py`, requiring the corresponding bundle ID,
+`MinimumOSVersion=15.0`, and no unapproved privacy usage-description,
+background-mode, ATS, or Bonjour activation keys. The simulator plist is checked
+with `--variant debug`; it may contain only the exact
+`NSBonjourServices=["_dartVmService._tcp"]` and Flutter SDK local-network
+description pair. The release plist is checked with `--variant release` and must
+contain neither entry. Release is the verifier's default variant.
+Available plist files are uploaded as short-retention artifacts even when a
+later verification step fails. The source's iOS 13 deployment declarations are
+automatically migrated by the frozen Flutter 3.47.4 build; iOS 15 is the
+effective supported runtime floor. Flutter 3.47.4 adds the exact pair above for
+debug VM-service publication. This is debugger metadata analogous to Flutter's
+debug-only Android `INTERNET` permission, not an optional media capability or a
+product network integration. The gate checks plist values only and does not
+claim that a runtime permission prompt was shown or suppressed on any device.
+This is build-plist evidence, not device execution evidence.
+
 Native unit-test wiring runs Android's
 `:starterkit_preferences:testDebugUnitTest` task for both source and renamed
 copies, and runs `swift test --package-path packages/starterkit_preferences/ios`
 for both source and renamed copies on macOS before either unsigned iOS build.
 These are host-side unit tests, not device or simulator execution evidence. The
 macOS job can run when the verify job has produced a template-identity output,
-even if an Android manifest gate failed, provided the workflow was not
-cancelled. This preserves native-test/build diagnostics without masking failure:
+even if an Android manifest gate failed, provided the Swift policy gate passed
+and the workflow was not cancelled. This preserves native-test/build diagnostics without masking failure:
 the verify job remains failed and the overall workflow remains failed. No
 `continue-on-error` or manifest-gate bypass is introduced.
 
