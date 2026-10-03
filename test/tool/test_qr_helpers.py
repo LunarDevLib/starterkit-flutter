@@ -367,7 +367,10 @@ class IosEvidenceTests(unittest.TestCase):
         self.lock.write_text("PODS:\n  - starterkit_platform (1.0.0)\n" + ("  - starterkit_qr_barcode (1.0.0)\n" if qr else "") + "DEPENDENCIES:\nSPEC CHECKSUMS:\n")
         self.registrant.write_text("@implementation GeneratedPluginRegistrant\nregisterWithRegistry:\nStarterkitPlatformPlugin\n" + ("StarterkitQrBarcodePlugin\n" if qr else ""))
         self.link.write_text("FILE: Runner\nNM:\n U StarterkitPlatformPlugin\nOTOOL:\n@rpath/starterkit_platform.framework/starterkit_platform\n" +
-                             ("@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode\nFILE: Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode\nNM:\n T StarterkitQrBarcodePlugin\nOTOOL:\n" if qr else ""))
+                             ("@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode\nFILE: Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode\nNM:\n T StarterkitQrBarcodePlugin\nOTOOL:\n@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode\n" if qr else ""))
+        self.link.write_text(self.link.read_text().replace("FILE: Runner\n", "FILE: Runner\nARCHS: arm64\n").replace(
+            "FILE: Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode\n",
+            "FILE: Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode\nARCHS: arm64\n"))
 
     def check(self, mode="default"):
         return evidence.check_ios(mode, self.lock, [self.registrant], self.link)
@@ -403,12 +406,78 @@ class IosEvidenceTests(unittest.TestCase):
                 with self.subTest(path=path, token=token), self.assertRaises(ValueError):
                     self.check()
 
-    def test_ios_collector_stages_actual_app_binaries_registrants_and_link_capture(self):
+    def debug_link_fixture(self):
+        # Reduced from PR6/run37115604364's real simulator artifact. The app
+        # launcher loads Runner.debug.dylib; that image loads the QR framework.
+        self.inputs("opt-in")
+        self.link.write_text(
+            "FILE: Runner\nNM:\n00000001000008b8 T ___debug_blank_executor_main\nSTDERR:\n\n"
+            "OTOOL:\n/actual/Runner (architecture arm64):\n"
+            "\t@rpath/Runner.debug.dylib (compatibility version 0.0.0, current version 0.0.0)\nSTDERR:\n\n"
+            "FILE: Runner.debug.dylib\nNM:\n                 U _OBJC_CLASS_$__TtC19starterkit_platform24StarterkitPlatformPlugin\nSTDERR:\n\n"
+            "OTOOL:\n/actual/Runner.debug.dylib (architecture arm64):\n"
+            "\t@rpath/starterkit_platform.framework/starterkit_platform (compatibility version 1.0.0, current version 1.0.0)\n"
+            "\t@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode (compatibility version 1.0.0, current version 1.0.0)\nSTDERR:\n\n"
+            "FILE: Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode\nNM:\n"
+            "0000000000018b80 S _OBJC_CLASS_$__TtC21starterkit_qr_barcode25StarterkitQrBarcodePlugin\nSTDERR:\n\n"
+            "OTOOL:\n/actual/starterkit_qr_barcode (architecture arm64):\n"
+            "\t@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode (compatibility version 1.0.0, current version 1.0.0)\nSTDERR:\n\n"
+        )
+        self.link.write_text(self.link.read_text().replace("\nNM:", "\nARCHS: arm64\nNM:"))
+
+    def test_real_xcode_debug_dylib_shape_preserves_defined_class_and_runner_load_chain(self):
+        self.debug_link_fixture()
+        self.assertTrue(self.check("opt-in")["plugin_present_in_link_evidence"])
+
+    def test_debug_linkage_requires_both_runner_edges_not_an_unloaded_embedded_framework(self):
+        for old, new in (("@rpath/Runner.debug.dylib", "@rpath/other.debug.dylib"),
+                         ("\t@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode", "\t@rpath/other.framework/other"),
+                         ("FILE: Runner.debug.dylib", "FILE: other.debug.dylib"),
+                         ("FILE: Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode", "FILE: Frameworks/other.framework/other")):
+            self.debug_link_fixture()
+            self.link.write_text(self.link.read_text().replace(old, new))
+            with self.subTest(old=old), self.assertRaises(ValueError):
+                self.check("opt-in")
+
+    def test_real_debug_shape_rejects_undefined_only_or_symbols_outside_framework_nm(self):
+        symbol = "0000000000018b80 S _OBJC_CLASS_$__TtC21starterkit_qr_barcode25StarterkitQrBarcodePlugin"
+        for replacement in (symbol.replace(" S ", " U "), "", "StarterkitQrBarcodePlugin",
+                            "STDERR:\n" + symbol, "OTOOL:\n" + symbol):
+            self.debug_link_fixture()
+            self.link.write_text(self.link.read_text().replace(symbol, replacement))
+            with self.subTest(replacement=replacement), self.assertRaises(ValueError):
+                self.check("opt-in")
+
+    def test_real_debug_shape_rejects_missing_registration_and_baseline_controls(self):
+        for path, token in ((self.registrant, "StarterkitQrBarcodePlugin"),
+                            (self.registrant, "StarterkitPlatformPlugin"),
+                            (self.lock, "starterkit_platform"),
+                            (self.link, "StarterkitPlatformPlugin"),
+                            (self.link, "starterkit_platform.framework")):
+            self.debug_link_fixture()
+            path.write_text(path.read_text().replace(token, "unrelated"))
+            with self.subTest(path=path, token=token), self.assertRaises(ValueError):
+                self.check("opt-in")
+
+    def test_real_debug_shape_rejects_empty_truncated_and_duplicate_file_captures(self):
+        for mutate in (
+            lambda text: text.split("FILE: Frameworks/starterkit_qr_barcode.framework/")[0],
+            lambda text: text.split("0000000000018b80 S")[0],
+            lambda text: text.replace("FILE: Runner.debug.dylib\nARCHS: arm64\nNM:", "FILE: Runner.debug.dylib\nARCHS: arm64\n"),
+            lambda text: text + "FILE: Runner\nNM:\n T fake\nOTOOL:\n@rpath/other\n",
+        ):
+            self.debug_link_fixture()
+            self.link.write_text(mutate(self.link.read_text()))
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                self.check("opt-in")
+
+    def collector_inputs(self):
         import plistlib
         app = self.root / "build/ios/iphoneos/Runner.app"
         app.mkdir(parents=True)
         (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Runner"}))
         (app / "Runner").write_bytes(b"mock Mach-O")
+        (app / "Runner.debug.dylib").write_bytes(b"mock debug Mach-O")
         for name in ("starterkit_platform", "starterkit_qr_barcode"):
             framework = app / "Frameworks" / (name + ".framework")
             framework.mkdir(parents=True)
@@ -423,22 +492,205 @@ class IosEvidenceTests(unittest.TestCase):
 
         def command(args, **kwargs):
             binary = Path(args[-1])
-            if args[1] == "nm":
+            if args[1] == "lipo":
+                text = " ".join(getattr(self, "collector_arches", ("arm64",))) + "\n"
+            elif args[1] == "nm":
                 text = " T StarterkitQrBarcodePlugin\n" if binary.name == evidence.PLUGIN else " T StarterkitPlatformPlugin\n"
+            elif binary.name == "Runner":
+                text = "@rpath/Runner.debug.dylib\n"
             else:
                 text = "@rpath/starterkit_platform.framework/starterkit_platform\n@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode\n"
             return subprocess.CompletedProcess(args, 0, text, "")
+        return app, command
 
+    def test_ios_collector_stages_actual_app_binaries_registrants_and_link_capture(self):
+        app, command = self.collector_inputs()
         with patch.object(evidence.subprocess, "run", side_effect=command), patch.object(evidence, "selected_inputs"):
             evidence.collect_ios(self.root, "opt-in", "release", app)
         output = self.root / "build/ci-qr-evidence/release"
         self.assertEqual(json.loads((output / "check.json").read_text())["status"], "ACTUAL_PASS")
         self.assertTrue((output / "Runner.app/Runner").is_file())
+        self.assertTrue((output / "Runner.app/Runner.debug.dylib").is_file())
+        self.assertIn("FILE: Runner.debug.dylib\n", (output / "native-linkage.txt").read_text())
         self.assertTrue((output / "ios/Podfile.lock").is_file())
         self.assertTrue((output / "ios/Runner/GeneratedPluginRegistrant.m").is_file())
         hashed = [item["path"] for item in json.loads((output / "artifact-hashes.json").read_text())]
         self.assertIn("Runner.app/Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode", hashed)
         self.assertIn("native-linkage.txt", hashed)
+
+    def test_ios_collector_fails_missing_empty_or_truncated_framework_binary(self):
+        app, command = self.collector_inputs()
+        binary = app / "Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode"
+        for content in (None, b"", b"truncated"):
+            if content is None:
+                binary.unlink()
+            else:
+                binary.write_bytes(content)
+
+            def capture(args, **kwargs):
+                if Path(args[-1]) == binary and content == b"truncated":
+                    return subprocess.CompletedProcess(args, 1, "", "truncated Mach-O")
+                return command(args, **kwargs)
+
+            with self.subTest(content=content), patch.object(evidence.subprocess, "run", side_effect=capture), self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                evidence.collect_ios(self.root, "opt-in", "release", app)
+
+    def test_ios_collector_missing_debug_dylib_cannot_fall_back_to_framework_presence(self):
+        app, command = self.collector_inputs()
+        (app / "Runner.debug.dylib").unlink()
+        with patch.object(evidence.subprocess, "run", side_effect=command), self.assertRaises(ValueError):
+            evidence.collect_ios(self.root, "opt-in", "release", app)
+
+    def slice_fixture(self, debug=True, arches=("arm64", "x86_64")):
+        self.inputs("opt-in")
+        qr = "@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode"
+        symbol = "0000000000018b80 S _OBJC_CLASS_$__TtC21starterkit_qr_barcode25StarterkitQrBarcodePlugin"
+
+        def record(name, symbols, loads):
+            return ("FILE: " + name + "\nARCHS: " + " ".join(arches) + "\nNM:\n"
+                    + "".join(f"{name} (for architecture {arch}):\n{symbols}\n" for arch in arches)
+                    + "STDERR:\n\nOTOOL:\n"
+                    + "".join(f"{name} (architecture {arch}):\n{loads}\n" for arch in arches)
+                    + "STDERR:\n\n")
+
+        records = [record("Runner", " U StarterkitPlatformPlugin", "\t@rpath/Runner.debug.dylib" if debug else "\t" + qr)]
+        if debug:
+            records.append(record("Runner.debug.dylib", " U StarterkitPlatformPlugin", "\t" + qr))
+        records.append(record("Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode", symbol,
+                              "\t@rpath/starterkit_platform.framework/starterkit_platform\n\t" + qr))
+        self.link.write_text("".join(records))
+        return records
+
+    def test_slice_aware_valid_fat_direct_and_debug_paths_with_reordered_records(self):
+        for debug in (False, True):
+            records = self.slice_fixture(debug=debug)
+            self.link.write_text("".join(reversed(records)))
+            self.assertEqual(self.check("opt-in")["classification"], "opt-in")
+
+    def test_missing_runner_cannot_be_impersonated_by_first_debug_dylib(self):
+        records = self.slice_fixture()
+        self.link.write_text("".join(records[1:]))
+        with self.assertRaises(ValueError):
+            self.check("opt-in")
+
+    def test_disjoint_architectures_cannot_supply_different_load_edges(self):
+        records = self.slice_fixture()
+        records[0] = records[0].replace("\t@rpath/Runner.debug.dylib", "\t@rpath/unloaded.debug.dylib", 1)
+        start = records[1].index("Runner.debug.dylib (architecture x86_64):")
+        records[1] = records[1][:start] + records[1][start:].replace("\t@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode", "\t@rpath/unloaded.framework/unloaded", 1)
+        self.link.write_text("".join(records))
+        with self.assertRaises(ValueError):
+            self.check("opt-in")
+
+    def test_each_executable_slice_requires_each_edge_and_its_defined_qr_class(self):
+        for arch in ("arm64", "x86_64"):
+            for missing in ("runner-edge", "debug-edge", "defined-class"):
+                records = self.slice_fixture()
+                index = {"runner-edge": 0, "debug-edge": 1, "defined-class": 2}[missing]
+                header = f"(for architecture {arch}):" if missing == "defined-class" else f"(architecture {arch}):"
+                start = records[index].index(header)
+                before, after = records[index][:start], records[index][start:]
+                if missing == "defined-class":
+                    after = after.replace(" S _OBJC_CLASS_", " U _OBJC_CLASS_", 1)
+                else:
+                    token = "@rpath/Runner.debug.dylib" if missing == "runner-edge" else "@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode"
+                    after = after.replace(token, "@rpath/unloaded", 1)
+                records[index] = before + after
+                self.link.write_text("".join(records))
+                with self.subTest(arch=arch, missing=missing), self.assertRaises(ValueError):
+                    self.check("opt-in")
+
+    def test_missing_image_slice_or_nm_otool_architecture_mismatch_fails(self):
+        import re
+        for index in (0, 1, 2):
+            for label in ("NM", "OTOOL"):
+                records = self.slice_fixture()
+                marker = "for architecture" if label == "NM" else "architecture"
+                section = records[index].index(label + ":\n")
+                before, after = records[index][:section], records[index][section:]
+                after = re.sub(r"(?ms)^[^\n]+ \(" + marker + r" x86_64\):\n.*?(?=^STDERR:|\Z)", "", after, count=1)
+                records[index] = before + after
+                self.link.write_text("".join(records))
+                with self.subTest(index=index, label=label), self.assertRaises(ValueError):
+                    self.check("opt-in")
+
+    def test_duplicate_architecture_blocks_inventories_and_tool_sections_fail(self):
+        for token, replacement in (("ARCHS: arm64 x86_64", "ARCHS: arm64 arm64"),
+                                   ("ARCHS: arm64 x86_64", "ARCHS: arm64 x86_64\nARCHS: arm64 x86_64"),
+                                   ("(for architecture x86_64):", "(for architecture arm64):"),
+                                   ("(architecture x86_64):", "(architecture arm64):"),
+                                   ("STDERR:\n\nOTOOL:", "STDERR:\n\nNM:\n T fake\nSTDERR:\n\nOTOOL:")):
+            records = self.slice_fixture()
+            self.link.write_text("".join(records).replace(token, replacement, 1))
+            with self.subTest(token=token), self.assertRaises(ValueError):
+                self.check("opt-in")
+
+    def test_thin_release_requires_explicit_single_slice_inventory(self):
+        import re
+        records = self.slice_fixture(debug=False, arches=("arm64",))
+        text = re.sub(r"(?m)^.+ \((?:for )?architecture arm64\):\n", "", "".join(records))
+        self.link.write_text(text)
+        self.assertEqual(self.check("opt-in")["classification"], "opt-in")
+        for wrong in (text.replace("ARCHS: arm64\n", ""), text.replace("ARCHS: arm64", "ARCHS: arm64 x86_64")):
+            self.link.write_text(wrong)
+            with self.assertRaises(ValueError):
+                self.check("opt-in")
+
+    def test_labelled_fat_captures_cannot_hide_slices_without_an_explicit_inventory(self):
+        self.slice_fixture()
+        self.link.write_text(self.link.read_text().replace("ARCHS: arm64 x86_64\n", ""))
+        with self.assertRaises(ValueError):
+            self.check("opt-in")
+
+    def test_collector_records_lipo_inventory_and_calls_both_tools_for_every_slice(self):
+        self.collector_arches = ("arm64", "x86_64")
+        app, command = self.collector_inputs()
+        calls = []
+
+        def capture(args, **kwargs):
+            calls.append(args)
+            return command(args, **kwargs)
+
+        with patch.object(evidence.subprocess, "run", side_effect=capture), patch.object(evidence, "selected_inputs"):
+            evidence.collect_ios(self.root, "opt-in", "simulator", app)
+        text = (self.root / "build/ci-qr-evidence/simulator/native-linkage.txt").read_text()
+        self.assertEqual(text.count("ARCHS: arm64 x86_64\n"), 4)
+        for binary in ("Runner", "Runner.debug.dylib", "starterkit_platform", evidence.PLUGIN):
+            for arch in self.collector_arches:
+                for tool in ("nm", "otool"):
+                    self.assertEqual(sum(args[1] == tool and args[2:4] == ["-arch", arch] and Path(args[-1]).name == binary for args in calls), 1)
+
+    def test_collector_rejects_invalid_or_failed_lipo_and_empty_wrong_arch_tool_output(self):
+        app, command = self.collector_inputs()
+        for failure in ("lipo-exit", "empty-inventory", "duplicate-inventory", "unsafe-inventory", "wrong-tool-arch", "empty-tool"):
+            def capture(args, **kwargs):
+                if args[1] == "lipo":
+                    if failure == "lipo-exit":
+                        return subprocess.CompletedProcess(args, 1, "", "bad binary")
+                    if failure in ("empty-inventory", "duplicate-inventory", "unsafe-inventory"):
+                        text = {"empty-inventory": "", "duplicate-inventory": "arm64 arm64", "unsafe-inventory": "-arch"}[failure]
+                        return subprocess.CompletedProcess(args, 0, text, "")
+                elif failure in ("wrong-tool-arch", "empty-tool"):
+                    text = "binary (architecture x86_64):\n T fake\n" if failure == "wrong-tool-arch" else ""
+                    return subprocess.CompletedProcess(args, 0, text, "")
+                return command(args, **kwargs)
+            with self.subTest(failure=failure), patch.object(evidence.subprocess, "run", side_effect=capture), self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                evidence.collect_ios(self.root, "opt-in", "simulator", app)
+
+    def test_collector_captures_explicit_thin_release_direct_linkage(self):
+        app, command = self.collector_inputs()
+        (app / "Runner.debug.dylib").unlink()
+
+        def capture(args, **kwargs):
+            if args[1] == "otool" and Path(args[-1]).name == "Runner":
+                return subprocess.CompletedProcess(args, 0, "@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode\n", "")
+            return command(args, **kwargs)
+
+        with patch.object(evidence.subprocess, "run", side_effect=capture), patch.object(evidence, "selected_inputs"):
+            evidence.collect_ios(self.root, "opt-in", "release", app)
+        output = self.root / "build/ci-qr-evidence/release"
+        self.assertEqual(json.loads((output / "check.json").read_text())["status"], "ACTUAL_PASS")
+        self.assertEqual((output / "native-linkage.txt").read_text().count("ARCHS: arm64\n"), 3)
 
 
 if __name__ == "__main__":

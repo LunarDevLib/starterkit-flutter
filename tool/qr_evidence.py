@@ -189,6 +189,50 @@ def hashes(root: Path, output: Path, includes: list[Path] | None = None) -> None
     output.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
 
 
+def ios_tool_sections(capture: str) -> tuple[str, str]:
+    sections = []
+    for label in ("NM", "OTOOL"):
+        matches = list(re.finditer(r"(?ms)^" + label + r":\n(.*?)(?=^STDERR:|^NM:|^OTOOL:|\Z)", capture))
+        if len(matches) != 1 or not matches[0].group(1).strip():
+            raise ValueError("missing/duplicate/truncated native " + label + " capture")
+        sections.append(matches[0].group(1))
+    return sections[0], sections[1]
+
+
+def ios_slice_sections(capture: str) -> dict[str, tuple[str, str]]:
+    nm, otool = ios_tool_sections(capture)
+    inventories = re.findall(r"(?m)^ARCHS: ([^\n]*)$", capture)
+    declared = inventories[0].split() if len(inventories) == 1 else []
+    if (len(inventories) != 1 or not declared or len(set(declared)) != len(declared)
+            or any(not re.fullmatch(r"[A-Za-z0-9_]+", arch) for arch in declared)):
+        raise ValueError("invalid native architecture inventory")
+
+    def split(text):
+        headers = list(re.finditer(r"(?m)^.+ \((?:for )?architecture ([A-Za-z0-9_]+)\):\n", text))
+        if not headers:
+            # Unlabelled output is usable only for an explicitly recorded thin image.
+            if len(declared) != 1 or re.search(r"\((?:for )?architecture\b", text):
+                raise ValueError("native slice architecture is not established")
+            return {declared[0]: text}
+        if text[:headers[0].start()].strip():
+            raise ValueError("mixed labelled/unlabelled native slice capture")
+        slices = {}
+        for index, header in enumerate(headers):
+            arch = header.group(1)
+            body = text[header.end():headers[index + 1].start() if index + 1 < len(headers) else len(text)]
+            if arch in slices or not body.strip():
+                raise ValueError("duplicate/empty native slice capture")
+            slices[arch] = body
+        if set(slices) != set(declared):
+            raise ValueError("native slice capture does not match architecture inventory")
+        return slices
+
+    symbols, loads = split(nm), split(otool)
+    if set(symbols) != set(loads):
+        raise ValueError("native NM/OTOOL architecture mismatch")
+    return {arch: (symbols[arch], loads[arch]) for arch in symbols}
+
+
 def check_ios(mode: str, pod_lock: Path, registrants: list[Path], link_evidence: Path) -> dict:
     lock_text = read_nonempty(pod_lock)
     registrant_text = registrations(registrants, "ios")
@@ -202,12 +246,35 @@ def check_ios(mode: str, pod_lock: Path, registrants: list[Path], link_evidence:
     if mode == "opt-in":
         if not re.search(r"(?m)^  - starterkit_qr_barcode \(1\.0\.0\)", lock_text):
             raise ValueError("opt-in Pod lock lacks QR pod version 1.0.0")
-        runner_link = linked_text.split("FILE:", 2)[1] if "FILE:" in linked_text else ""
-        framework = re.search(
-            r"(?s)FILE: Frameworks/starterkit_qr_barcode\.framework/starterkit_qr_barcode\n(.*?)(?=FILE:|$)", linked_text)
-        defined_plugin = framework is not None and re.search(r"\b[TtDSs]\s+\S*StarterkitQrBarcodePlugin", framework.group(1))
-        if REGISTRATION not in registrant_text or not defined_plugin or "@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode" not in runner_link:
-            raise ValueError("opt-in requires generated registration and native framework/symbol linkage")
+        records = {}
+        for match in re.finditer(r"(?ms)^FILE: ([^\n]+)\n(.*?)(?=^FILE:|\Z)", linked_text):
+            name, capture = match.groups()
+            if name in records:
+                raise ValueError("duplicate native binary capture: " + name)
+            ios_tool_sections(capture)
+            records[name] = capture
+        framework_name = "Frameworks/starterkit_qr_barcode.framework/starterkit_qr_barcode"
+        if "Runner" not in records or framework_name not in records or REGISTRATION not in registrant_text:
+            raise ValueError("opt-in requires Runner, generated registration and QR framework")
+        runner = ios_slice_sections(records["Runner"])
+        framework = ios_slice_sections(records[framework_name])
+        debug = ios_slice_sections(records["Runner.debug.dylib"]) if "Runner.debug.dylib" in records else {}
+
+        def loads(record, install_name):
+            return record is not None and any(
+                line.strip().split(" (compatibility version", 1)[0] == install_name
+                for line in record[1].splitlines()
+            )
+
+        qr_install_name = "@rpath/starterkit_qr_barcode.framework/starterkit_qr_barcode"
+        for arch, image in runner.items():
+            qr_slice = framework.get(arch)
+            defined_plugin = qr_slice is not None and re.search(
+                r"(?m)^[ \t]*(?:[0-9a-fA-F]+\s+)?[TtDSs]\s+\S*StarterkitQrBarcodePlugin$", qr_slice[0])
+            direct = loads(image, qr_install_name)
+            via_debug = loads(image, "@rpath/Runner.debug.dylib") and loads(debug.get(arch), qr_install_name)
+            if not defined_plugin or not (direct or via_debug):
+                raise ValueError("opt-in requires defined QR class and complete Runner load chain for slice " + arch)
     return {"classification": mode, "pod_lock": str(pod_lock),
             "registrants": [str(path) for path in registrants],
             "plugin_present_in_link_evidence": REGISTRATION in linked_text,
@@ -313,20 +380,42 @@ def collect_ios(root: Path, mode: str, variant: str, app: Path) -> None:
     shutil.copytree(app, output / "Runner.app", dirs_exist_ok=True)
     info = plistlib.loads((app / "Info.plist").read_bytes())
     binaries = [app / info["CFBundleExecutable"]]
+    # Xcode debug builds put the app's plugin imports/loads in this dylib;
+    # Runner is a launcher which loads it, not a direct plugin consumer.
+    debug_dylib = app / (info["CFBundleExecutable"] + ".debug.dylib")
+    if debug_dylib.is_file():
+        binaries.append(debug_dylib)
     for framework in sorted((app / "Frameworks").glob("*.framework")):
         if framework.stem not in ("App", "Flutter"):
             binaries.append(framework / framework.stem)
     linked = output / "native-linkage.txt"
     with linked.open("w") as stream:
         for binary in binaries:
+            if not binary.is_file() or binary.stat().st_size == 0:
+                raise ValueError("missing/empty native binary: " + str(binary))
             stream.write(f"FILE: {binary.relative_to(app)}\n")
-            for label, command in (("NM", ["xcrun", "nm", "-g", str(binary)]),
-                                   ("OTOOL", ["xcrun", "otool", "-L", str(binary)])):
-                result = subprocess.run(command, capture_output=True, text=True)
-                stream.write(f"{label}:\n{result.stdout}\n")
-                stream.write(f"STDERR:\n{result.stderr}\n")
-                stream.flush()
-                result.check_returncode()
+            inventory = subprocess.run(["xcrun", "lipo", "-archs", str(binary)], capture_output=True, text=True)
+            inventory.check_returncode()
+            arches = inventory.stdout.split()
+            if not arches or len(set(arches)) != len(arches) or any(not re.fullmatch(r"[A-Za-z0-9_]+", arch) for arch in arches):
+                raise ValueError("invalid lipo architecture inventory: " + str(binary))
+            stream.write("ARCHS: " + " ".join(arches) + "\n")
+            for label, tool, flag in (("NM", "nm", "-g"), ("OTOOL", "otool", "-L")):
+                stream.write(f"{label}:\n")
+                diagnostics = []
+                for arch in arches:
+                    result = subprocess.run(["xcrun", tool, "-arch", arch, flag, str(binary)], capture_output=True, text=True)
+                    headers = re.findall(r"(?m)^.+ \((?:for )?architecture ([A-Za-z0-9_]+)\):\n", result.stdout)
+                    if any(value != arch for value in headers) or len(headers) > 1:
+                        raise ValueError("native tool returned unexpected architecture: " + str(binary))
+                    body = re.sub(r"(?m)^.+ \((?:for )?architecture [A-Za-z0-9_]+\):\n", "", result.stdout)
+                    if not body.strip():
+                        raise ValueError("empty native tool slice capture: " + str(binary))
+                    stream.write(f"{binary.relative_to(app)} (architecture {arch}):\n{body}\n")
+                    diagnostics.append(result.stderr)
+                    stream.flush()
+                    result.check_returncode()
+                stream.write("STDERR:\n" + "\n".join(diagnostics) + "\n")
     diagnostic(output / "check.json", lambda: check_ios(mode, lock, registrants, linked))
     selected_inputs(root, output)
     hashes(output, output / "artifact-hashes.json")
