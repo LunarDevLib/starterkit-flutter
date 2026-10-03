@@ -161,6 +161,19 @@ capability does not acquire images or provide a camera/picker; Gallery remains a
 separate product choice. Its returned text is untrusted and is neither executed
 nor used for navigation or network access.
 
+### Social Login
+
+The Social Login platform package declares the Dart package `crypto` at exact
+version `3.0.7` for SHA-256 PKCE S256 challenge generation from independently
+generated `Random.secure` verifier material. This version is already present
+transitively in the root resolution; the package declares its direct use
+explicitly. `crypto` is a cryptography utility, not a provider/authentication
+SDK or network client. No provider SDK or native browser adapter is supplied.
+The default app does not compose a login service, configure an OAuth endpoint,
+or start a browser/network request. Product-owned browser and token-transport
+ports are required for explicit use; the dependency is not an authorization
+connection or provider integration.
+
 ## Optional future integrations (not implemented)
 
 Dio, cloud SDKs, Sentry, Firebase services, third-party geolocation/image-picker/
