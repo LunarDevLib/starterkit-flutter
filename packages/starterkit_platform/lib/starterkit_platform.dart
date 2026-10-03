@@ -7,6 +7,7 @@ export 'push.dart';
 export 'app_update.dart';
 export 'analytics_crash.dart';
 export 'social_login.dart';
+export 'remote_config.dart';
 
 const MethodChannel _mediaChannel = MethodChannel('starterkit/platform/media');
 
