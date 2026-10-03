@@ -90,6 +90,7 @@ link를 검증하지 않습니다. 소비 제품은 자체 요구에 맞는 검�
 - [기능 확장 가이드](FEATURE_SETUP.md)
 - [보안 경계](SECURITY.md)
 - [아키텍처와 성장 규칙](docs/ARCHITECTURE.md)
+- [CI 라우팅 및 전체 검증](docs/CI.md)
 
 
 ## Optional Capabilities
