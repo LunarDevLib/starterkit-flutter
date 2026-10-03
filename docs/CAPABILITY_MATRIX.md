@@ -13,8 +13,8 @@ capability.
 | Location | Yes | Dart contract tests passed; native/consumer CI pending (no device PASS) | No | [LOCATION](capabilities/LOCATION.md) |
 | QR / Barcode | Dart API implemented; native/consumer evidence pending | Dart contract tests; native fixtures/CI pending | No | [QR_BARCODE](capabilities/QR_BARCODE.md) |
 | Biometric | Yes | Dart contract tests + native policy coverage; native/consumer CI pending | No | [BIOMETRIC](capabilities/BIOMETRIC.md) |
-| Analytics | Planned | No | No | Planned |
-| Crash Reporting | Planned | No | No | Planned |
+| Analytics | Optional Dart validation service with product transport | Contract tests provided; production backend/consent/device NOT RUN | No | [ANALYTICS](capabilities/ANALYTICS.md) |
+| Crash Reporting | Optional handled-report service with product transport; no automatic capture | No result claimed here; production backend/consent/device NOT RUN | No | [CRASH_REPORTING](capabilities/CRASH_REPORTING.md) |
 | Social Login | Planned | No | No | Planned |
 | Native Share | Dart API implemented; native/integration CI pending | 13 Dart share tests + 40 existing platform tests passed; device/UI NOT_RUN | No | [NATIVE_SHARE](capabilities/NATIVE_SHARE.md) |
 | App Update | Dart validation API with product-supplied ports | Contract tests provided; production service/store/device NOT RUN | No | [APP_UPDATE](capabilities/APP_UPDATE.md) |

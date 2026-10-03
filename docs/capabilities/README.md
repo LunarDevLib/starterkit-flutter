@@ -12,8 +12,8 @@ integration verification.
 - Location — planned
 - [QR / Barcode](QR_BARCODE.md) — Dart API implemented; native/consumer evidence pending
 - Biometric — planned
-- Analytics — planned
-- Crash Reporting — planned
+- [Analytics](ANALYTICS.md) — optional explicit submission; product transport and consent required
+- [Crash Reporting](CRASH_REPORTING.md) — optional handled reports only; no automatic capture
 - Social Login — planned
 - [Native Share](NATIVE_SHARE.md) — Dart API implemented; native/integration CI pending
 - [App Update](APP_UPDATE.md) — Dart validation API with product-supplied ports; backend/store integration NOT RUN
