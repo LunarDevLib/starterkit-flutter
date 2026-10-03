@@ -10,7 +10,7 @@ integration verification.
 - [Camera](CAMERA.md) — implemented
 - [Gallery](GALLERY.md) — implemented
 - Location — planned
-- QR / Barcode — planned
+- [QR / Barcode](QR_BARCODE.md) — Dart API implemented; native/consumer evidence pending
 - Biometric — planned
 - Analytics — planned
 - Crash Reporting — planned

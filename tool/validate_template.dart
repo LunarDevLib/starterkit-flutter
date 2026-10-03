@@ -81,6 +81,7 @@ void main(List<String> args) {
     for (final optionalPackage in const [
       'starterkit_webview',
       'starterkit_platform',
+      'starterkit_qr_barcode',
     ]) {
       if (content.contains('package:$optionalPackage/')) {
         failures.add(
@@ -90,6 +91,21 @@ void main(List<String> args) {
     }
   }
   final pubspec = File('${root.path}/pubspec.yaml').readAsStringSync();
+  String? dependencySection;
+  for (final line in const LineSplitter().convert(pubspec)) {
+    if (line.isNotEmpty && !RegExp(r'^\s').hasMatch(line)) {
+      dependencySection = RegExp(
+        r'^(dependencies|dev_dependencies|dependency_overrides):',
+      ).firstMatch(line)?.group(1);
+    }
+    if (dependencySection != null &&
+        RegExp(r'''(?:^|[\s,{])['"]?starterkit_qr_barcode['"]?\s*:''')
+            .hasMatch(line)) {
+      failures.add(
+        'default app must not declare optional capability starterkit_qr_barcode in $dependencySection',
+      );
+    }
+  }
   final forbidden = RegExp(
     r'^\s{2}(firebase_|sentry|webview|geolocator|image_picker|camera|permission_handler|firebase_messaging)',
     multiLine: true,

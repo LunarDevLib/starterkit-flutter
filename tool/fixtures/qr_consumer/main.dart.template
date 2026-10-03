@@ -1,0 +1,17 @@
+import 'dart:convert';
+
+import 'package:flutter/widgets.dart';
+import 'package:starterkit_qr_barcode/starterkit_qr_barcode.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  const capability = StarterQrBarcodeCapability(enabled: true);
+  // Real encoded 1x1 PNG, not an empty input rejected before native dispatch.
+  final result = await capability.decode(
+    base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC',
+    ),
+  );
+  // Consume the result in reachable UI so release tree shaking retains decode.
+  runApp(Text(result.kind.name, textDirection: TextDirection.ltr));
+}

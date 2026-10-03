@@ -19,6 +19,8 @@ void main() {
     });
 
     test('renames a copy successfully', () async {
+      final qrBefore = _optionalQrPackageHashes(fixture);
+      expect(qrBefore, isNotEmpty);
       final result = await _runBootstrap(fixture, [
         '--package-name',
         'sample_app',
@@ -37,6 +39,7 @@ void main() {
         bundleId: 'dev.example.sampleapp',
         scheme: 'sample-app',
       );
+      expect(_optionalQrPackageHashes(fixture), qrBefore);
     });
 
     test('dry-run makes no changes', () async {
@@ -637,7 +640,40 @@ Directory _createFixture() {
   // iOS
   copy.file('ios/Runner/Info.plist');
   copy.file('ios/Runner.xcodeproj/project.pbxproj');
+  final optionalQrPackage = Directory(
+    '${repo.path}/packages/starterkit_qr_barcode',
+  );
+  if (optionalQrPackage.existsSync()) {
+    for (final entity in optionalQrPackage.listSync(recursive: true)) {
+      if (entity is File) {
+        final relative = entity.path.substring(repo.path.length + 1);
+        if (relative
+            .split(Platform.pathSeparator)
+            .any(
+              (part) => const {
+                '.dart_tool',
+                'build',
+                '.gradle',
+                '.build',
+                'Pods',
+                '.symlinks',
+                'ephemeral',
+                '__pycache__',
+              }.contains(part),
+            )) {
+          continue;
+        }
+        copy.file(relative);
+      }
+    }
+  }
   return temp;
+}
+
+Map<String, String> _optionalQrPackageHashes(Directory root) {
+  final package = Directory('${root.path}/packages/starterkit_qr_barcode');
+  if (!package.existsSync()) return const {};
+  return _contentHashes(package);
 }
 
 class _Copier {

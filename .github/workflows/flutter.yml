@@ -40,15 +40,29 @@ jobs:
       - name: Resolve locked platform capability package
         working-directory: packages/starterkit_platform
         run: flutter pub get --enforce-lockfile
+      - name: Resolve locked QR barcode capability package
+        working-directory: packages/starterkit_qr_barcode
+        run: flutter pub get --enforce-lockfile
       - run: flutter gen-l10n
       - run: dart run tool/validate_template.dart
+      - name: Canonical source must fail product release readiness
+        if: ${{ steps.template-identity.outputs.is_template == 'true' }}
+        run: |
+          set -euo pipefail
+          report="${{ runner.temp }}/source-release-readiness.log"
+          if dart run tool/validate_template.dart --release-readiness >"$report" 2>&1; then
+            echo "ERROR: canonical template unexpectedly passed product readiness" >&2
+            exit 1
+          fi
+          grep -F 'pubspec name is still the template default' "$report"
       - run: >-
           dart format --output=none --set-exit-if-changed
           lib test tool packages/starterkit_connectivity/lib
           packages/starterkit_connectivity/test packages/starterkit_preferences/lib
           packages/starterkit_preferences/test packages/starterkit_webview/lib
           packages/starterkit_webview/test packages/starterkit_platform/lib
-          packages/starterkit_platform/test
+          packages/starterkit_platform/test packages/starterkit_qr_barcode/lib
+          packages/starterkit_qr_barcode/test
       - run: flutter analyze
       - name: Analyze connectivity package
         working-directory: packages/starterkit_connectivity
@@ -73,6 +87,12 @@ jobs:
         run: flutter analyze --no-pub
       - name: Test platform capability package
         working-directory: packages/starterkit_platform
+        run: flutter test --no-pub
+      - name: Analyze QR barcode capability package
+        working-directory: packages/starterkit_qr_barcode
+        run: flutter analyze --no-pub
+      - name: Test QR barcode capability package
+        working-directory: packages/starterkit_qr_barcode
         run: flutter test --no-pub
       - name: Test Android and iOS baseline verifier fixtures
         run: python3 -m unittest discover -s test/tool -p 'test_*.py'
@@ -185,6 +205,47 @@ jobs:
         run: >-
           python3 tool/verify_android_baseline.py
           --apk build/app/outputs/flutter-apk/app-release.apk --variant release
+      - name: Capture default QR absence evidence
+        if: ${{ always() && !cancelled() && steps.android-release-apk.outcome == 'success' }}
+        run: python3 tool/qr_evidence.py collect-android --mode default
+      - name: Upload default Android QR absence evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-default-android-source
+          include-hidden-files: true
+          path: build/ci-qr-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Build source-identity QR opt-in Android consumer
+        if: ${{ always() && steps.android-release-apk.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          consumer="${{ runner.temp }}/qr-source-consumer"
+          python3 tool/prepare_qr_consumer.py --source "$GITHUB_WORKSPACE" --destination "$consumer"
+          cd "$consumer"
+          flutter pub get
+          dart format --output=none --set-exit-if-changed test/tool/fixtures/qr_consumer/main.dart
+          flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart
+          flutter build apk --debug --target test/tool/fixtures/qr_consumer/main.dart
+          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
+          flutter build apk --release --target test/tool/fixtures/qr_consumer/main.dart
+          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-release.apk --variant release
+          ./android/gradlew --project-dir android :starterkit_qr_barcode:testDebugUnitTest
+          python3 tool/qr_evidence.py collect-android --mode opt-in
+      - name: Upload source QR opt-in Android evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-opt-in-android-source
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/qr-source-consumer/build/ci-qr-evidence/
+            ${{ runner.temp }}/qr-source-consumer/build/app/outputs/flutter-apk/*.apk
+            ${{ runner.temp }}/qr-source-consumer/build/starterkit_qr_barcode/test-results/
+            ${{ runner.temp }}/qr-source-consumer/build/starterkit_qr_barcode/reports/tests/
+          if-no-files-found: warn
+          retention-days: 7
 
   renamed-copy:
     needs: verify
@@ -238,9 +299,10 @@ jobs:
         working-directory: ${{ runner.temp }}/renamed-copy
         run: |
           flutter pub get --enforce-lockfile
+          (cd packages/starterkit_qr_barcode && flutter pub get --enforce-lockfile)
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test packages/starterkit_qr_barcode/lib packages/starterkit_qr_barcode/test
           flutter analyze
           # Bootstrap tests assume the unrenamed template fixtures; exclude them from the renamed copy.
           flutter test --exclude-tags template-only
@@ -249,6 +311,7 @@ jobs:
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_qr_barcode && flutter analyze --no-pub && flutter test --no-pub)
       - name: Build renamed Android debug APK
         id: renamed-android-debug-apk
         if: ${{ success() }}
@@ -359,17 +422,155 @@ jobs:
         run: >-
           python3 tool/verify_android_baseline.py
           --apk build/app/outputs/flutter-apk/app-release.apk --variant release
+      - name: Capture renamed default QR absence evidence
+        if: ${{ always() && !cancelled() && steps.renamed-android-release-apk.outcome == 'success' }}
+        working-directory: ${{ runner.temp }}/renamed-copy
+        run: python3 tool/qr_evidence.py collect-android --mode default
+      - name: Upload renamed default Android QR absence evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-default-android-renamed
+          include-hidden-files: true
+          path: ${{ runner.temp }}/renamed-copy/build/ci-qr-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Build renamed QR opt-in Android consumer
+        if: ${{ always() && steps.renamed-android-release-apk.outcome == 'success' }}
+        run: |
+          set -euo pipefail
+          consumer="${{ runner.temp }}/qr-renamed-consumer"
+          python3 tool/prepare_qr_consumer.py --source "${{ runner.temp }}/renamed-copy" --destination "$consumer"
+          cd "$consumer"
+          flutter pub get
+          dart format --output=none --set-exit-if-changed test/tool/fixtures/qr_consumer/main.dart
+          flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart
+          flutter build apk --debug --target test/tool/fixtures/qr_consumer/main.dart
+          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-debug.apk --variant debug
+          flutter build apk --release --target test/tool/fixtures/qr_consumer/main.dart
+          python3 tool/verify_android_baseline.py --apk build/app/outputs/flutter-apk/app-release.apk --variant release
+          ./android/gradlew --project-dir android :starterkit_qr_barcode:testDebugUnitTest
+          python3 tool/qr_evidence.py collect-android --mode opt-in
+      - name: Upload renamed QR opt-in Android evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-opt-in-android-renamed
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/qr-renamed-consumer/build/ci-qr-evidence/
+            ${{ runner.temp }}/qr-renamed-consumer/build/app/outputs/flutter-apk/*.apk
+            ${{ runner.temp }}/qr-renamed-consumer/build/starterkit_qr_barcode/test-results/
+            ${{ runner.temp }}/qr-renamed-consumer/build/starterkit_qr_barcode/reports/tests/
+          if-no-files-found: warn
+          retention-days: 7
 
   swift-policy:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Test QR production decoder and Vision fixtures
+        run: |
+          set -euo pipefail
+          mkdir -p build/ci-qr-swift-evidence
+          swift test --package-path packages/starterkit_qr_barcode/ios 2>&1 | tee build/ci-qr-swift-evidence/production-tests.log
+          python3 tool/qr_evidence.py hashes --root packages/starterkit_qr_barcode --output build/ci-qr-swift-evidence/input-hashes.json
+          python3 tool/qr_evidence.py hashes --root build/ci-qr-swift-evidence --output build/ci-qr-swift-evidence/evidence-hashes.json
+      - name: Upload QR production Swift fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-production-swift-tests
+          path: build/ci-qr-swift-evidence/
+          if-no-files-found: warn
+          retention-days: 7
       - name: Test preferences Swift package
         run: swift test --package-path packages/starterkit_preferences/ios
       - name: Test WebView Swift package
         run: swift test --package-path packages/starterkit_webview/ios
       - name: Test platform Swift package
         run: swift test --package-path packages/starterkit_platform/ios
+
+  qr-opt-in-ios:
+    needs: [verify, swift-policy, ios-simulator]
+    if: ${{ always() && !cancelled() && needs.verify.outputs.is_template == 'true' && needs.swift-policy.result == 'success' && needs.ios-simulator.result == 'success' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+      - name: Validate baseline then build source QR opt-in iOS consumer
+        run: |
+          set -euo pipefail
+          flutter pub get --enforce-lockfile
+          dart run tool/validate_template.dart
+          consumer="${{ runner.temp }}/qr-ios-source"
+          python3 tool/prepare_qr_consumer.py --source "$GITHUB_WORKSPACE" --destination "$consumer"
+          cd "$consumer"
+          flutter pub get
+          dart format --output=none --set-exit-if-changed test/tool/fixtures/qr_consumer/main.dart
+          flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart
+          mkdir -p build/ci-qr-evidence
+          flutter build ios --simulator --no-codesign --target test/tool/fixtures/qr_consumer/main.dart
+          cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-qr-evidence/source-simulator-Info.plist
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --bundle-id com.example.flutterstarterkit --minimum-os-version 15.0 --variant debug
+          python3 tool/qr_evidence.py collect-ios --mode opt-in --variant simulator --app build/ios/iphonesimulator/Runner.app
+          flutter build ios --release --no-codesign --target test/tool/fixtures/qr_consumer/main.dart
+          cp build/ios/iphoneos/Runner.app/Info.plist build/ci-qr-evidence/source-release-Info.plist
+          python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --bundle-id com.example.flutterstarterkit --minimum-os-version 15.0 --variant release
+          python3 tool/qr_evidence.py collect-ios --mode opt-in --variant release --app build/ios/iphoneos/Runner.app
+      - name: Upload source QR opt-in iOS artifacts and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-opt-in-ios-source
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/qr-ios-source/build/ci-qr-evidence/
+            ${{ runner.temp }}/qr-ios-source/build/ios/iphonesimulator/Runner.app/
+            ${{ runner.temp }}/qr-ios-source/build/ios/iphoneos/Runner.app/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Bootstrap, validate, and build renamed QR opt-in iOS consumer
+        run: |
+          set -euo pipefail
+          base="${{ runner.temp }}/qr-ios-renamed-base"
+          consumer="${{ runner.temp }}/qr-ios-renamed"
+          git clone . "$base"
+          cd "$base"
+          dart tool/bootstrap_project.dart --package-name sample_portable --app-name 'Sample Portable' --bundle-id dev.example.sampleportable --scheme sample-portable
+          flutter pub get --enforce-lockfile
+          flutter gen-l10n
+          dart run tool/validate_template.dart --release-readiness
+          python3 "$GITHUB_WORKSPACE/tool/prepare_qr_consumer.py" --source "$base" --destination "$consumer"
+          cd "$consumer"
+          flutter pub get
+          dart format --output=none --set-exit-if-changed test/tool/fixtures/qr_consumer/main.dart
+          flutter analyze --no-pub test/tool/fixtures/qr_consumer/main.dart
+          mkdir -p build/ci-qr-evidence
+          flutter build ios --simulator --no-codesign --target test/tool/fixtures/qr_consumer/main.dart
+          cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-qr-evidence/renamed-simulator-Info.plist
+          python3 "$GITHUB_WORKSPACE/tool/verify_ios_baseline.py" --plist build/ios/iphonesimulator/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant debug
+          python3 tool/qr_evidence.py collect-ios --mode opt-in --variant simulator --app build/ios/iphonesimulator/Runner.app
+          flutter build ios --release --no-codesign --target test/tool/fixtures/qr_consumer/main.dart
+          cp build/ios/iphoneos/Runner.app/Info.plist build/ci-qr-evidence/renamed-release-Info.plist
+          python3 "$GITHUB_WORKSPACE/tool/verify_ios_baseline.py" --plist build/ios/iphoneos/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant release
+          python3 tool/qr_evidence.py collect-ios --mode opt-in --variant release --app build/ios/iphoneos/Runner.app
+      - name: Upload renamed QR opt-in iOS artifacts and evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-opt-in-ios-renamed
+          include-hidden-files: true
+          path: |
+            ${{ runner.temp }}/qr-ios-renamed/build/ci-qr-evidence/
+            ${{ runner.temp }}/qr-ios-renamed/build/ios/iphonesimulator/Runner.app/
+            ${{ runner.temp }}/qr-ios-renamed/build/ios/iphoneos/Runner.app/
+          if-no-files-found: warn
+          retention-days: 7
 
   ios-simulator:
     runs-on: macos-latest
@@ -392,9 +593,10 @@ jobs:
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_qr_barcode && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test packages/starterkit_qr_barcode/lib packages/starterkit_qr_barcode/test
           flutter analyze
           if [ "$IS_TEMPLATE" = "true" ]; then
             flutter test
@@ -411,9 +613,11 @@ jobs:
           cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-ios-diagnostics/source-simulator-Info.plist
           ios_verification_failed=0
           python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 --variant debug "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
+          python3 tool/qr_evidence.py collect-ios --mode default --variant simulator --app build/ios/iphonesimulator/Runner.app
           flutter build ios --release --no-codesign
           cp build/ios/iphoneos/Runner.app/Info.plist build/ci-ios-diagnostics/source-release-Info.plist
           python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --xcode-project ios/Runner.xcodeproj/project.pbxproj --minimum-os-version 15.0 --variant release "${source_bundle_id_assertion[@]}" || ios_verification_failed=1
+          python3 tool/qr_evidence.py collect-ios --mode default --variant release --app build/ios/iphoneos/Runner.app
           [ "$ios_verification_failed" -eq 0 ]
       - name: Upload source iOS built Info.plist evidence
         if: always()
@@ -421,6 +625,15 @@ jobs:
         with:
           name: ios-built-plists-source
           path: build/ci-ios-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload source iOS default QR absence evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-default-ios-source
+          include-hidden-files: true
+          path: build/ci-qr-evidence/
           if-no-files-found: warn
           retention-days: 7
       - name: Bootstrap fresh copy and iOS simulator build
@@ -436,23 +649,28 @@ jobs:
           (cd packages/starterkit_preferences && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_webview && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           (cd packages/starterkit_platform && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
+          (cd packages/starterkit_qr_barcode && flutter pub get --enforce-lockfile && flutter analyze --no-pub && flutter test --no-pub)
           flutter gen-l10n
           dart run tool/validate_template.dart --release-readiness
-          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test
+          dart format --output=none --set-exit-if-changed lib test tool packages/starterkit_connectivity/lib packages/starterkit_connectivity/test packages/starterkit_preferences/lib packages/starterkit_preferences/test packages/starterkit_webview/lib packages/starterkit_webview/test packages/starterkit_platform/lib packages/starterkit_platform/test packages/starterkit_qr_barcode/lib packages/starterkit_qr_barcode/test
           flutter analyze
           flutter test --exclude-tags template-only
           python3 -m unittest discover -s test/tool -p 'test_*.py'
           swift test --package-path packages/starterkit_preferences/ios
           swift test --package-path packages/starterkit_webview/ios
           swift test --package-path packages/starterkit_platform/ios
+          mkdir -p build/ci-qr-evidence
+          swift test --package-path packages/starterkit_qr_barcode/ios 2>&1 | tee build/ci-qr-evidence/renamed-production-swift-tests.log
           flutter build ios --simulator --no-codesign
           mkdir -p build/ci-ios-diagnostics
           cp build/ios/iphonesimulator/Runner.app/Info.plist build/ci-ios-diagnostics/renamed-simulator-Info.plist
           ios_verification_failed=0
           python3 tool/verify_ios_baseline.py --plist build/ios/iphonesimulator/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant debug || ios_verification_failed=1
+          python3 tool/qr_evidence.py collect-ios --mode default --variant simulator --app build/ios/iphonesimulator/Runner.app
           flutter build ios --release --no-codesign
           cp build/ios/iphoneos/Runner.app/Info.plist build/ci-ios-diagnostics/renamed-release-Info.plist
           python3 tool/verify_ios_baseline.py --plist build/ios/iphoneos/Runner.app/Info.plist --bundle-id dev.example.sampleportable --minimum-os-version 15.0 --variant release || ios_verification_failed=1
+          python3 tool/qr_evidence.py collect-ios --mode default --variant release --app build/ios/iphoneos/Runner.app
           [ "$ios_verification_failed" -eq 0 ]
       - name: Upload renamed iOS built Info.plist evidence
         if: always()
@@ -460,5 +678,14 @@ jobs:
         with:
           name: ios-built-plists-renamed
           path: ${{ runner.temp }}/ios-renamed-copy/build/ci-ios-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload renamed iOS default QR absence evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qr-default-ios-renamed
+          include-hidden-files: true
+          path: ${{ runner.temp }}/ios-renamed-copy/build/ci-qr-evidence/
           if-no-files-found: warn
           retention-days: 7
