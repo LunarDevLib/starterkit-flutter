@@ -142,6 +142,7 @@ enum SharePolicy {
       components.query == nil, components.fragment == nil,
       components.user == nil, components.password == nil, components.port == nil,
       components.host == nil || components.host == "" || components.host == "localhost",
+      !components.percentEncodedPath.contains("%00"),
       components.path.hasPrefix("/"), !hasControls(components.path),
       let url = components.url, url.isFileURL
     else { return nil }
